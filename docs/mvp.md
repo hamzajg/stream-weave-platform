@@ -7,66 +7,23 @@ A developer can run `ai java-dev "create a REST controller"` and get code back.
 
 ---
 
-### Step 1: Agent Registry Setup
+### Step 1: AutoGen Studio UI (manage agents, models, tools)
 
-**Location:** `agent-registry/agents/`
+Run AutoGen Studio UI and configure your local model provider (Ollama).
 
-Create initial agents:
+Create at least two agents/workflows in Studio:
+- `java-dev`
+- `general`
 
-`java-dev.json`
-```json
-{
-  "id": "java-dev",
-  "name": "Java Developer",
-  "model": "qwen3:4b",
-  "system": "You are a senior Java developer. Only output clean, working code. No explanation.",
-  "mode": "code",
-  "temperature": 0.2,
-  "maxTokens": 2048,
-  "tools": []
-}
-```
-
-`general.json`
-```json
-{
-  "id": "general",
-  "name": "General Assistant",
-  "model": "qwen3:4b",
-  "system": "You are a helpful assistant.",
-  "mode": "chat",
-  "temperature": 0.7,
-  "maxTokens": 1024,
-  "tools": []
-}
-```
-
-**Done when:** JSON files exist and can be loaded by gateway.
+**Done when:** Agents/workflows exist in Studio and you can run them in the UI.
 
 ---
 
-### Step 2: Agent Runtime (Python)
+### Step 2: AutoGen Studio Serve/API (execution endpoint)
 
-**Location:** `agent-runtime/`
+Start AutoGen Studio in serve/API mode to expose your selected team/workflow over HTTP so the gateway can invoke it.
 
-Files to create:
-- `main.py` — FastAPI app
-- `agent_runner.py` — AutoGen execution logic
-- `requirements.txt`
-
-**Minimal `/run-agent` endpoint:**
-```python
-@app.post("/run-agent")
-async def run_agent(request: RunAgentRequest):
-    agent = AssistantAgent(
-        name=request.config["id"],
-        system_message=request.config["system"],
-        llm_config={"model": request.config["model"], ...}
-    )
-    # execute and return output
-```
-
-**Done when:** `curl localhost:9000/run-agent` returns a response.
+**Done when:** Studio serve mode is running and its API docs are reachable (typically at `/docs` on the serve port).
 
 ---
 
@@ -76,8 +33,7 @@ async def run_agent(request: RunAgentRequest):
 
 Classes to create:
 - `AgentController` — `POST /api/agents/{id}/invoke`
-- `AgentRegistryService` — load JSON configs
-- `AgentRuntimeClient` — HTTP call to Python runtime
+- `StudioClient` (or equivalent) — HTTP call to AutoGen Studio serve/API
 - `AgentConfig` — model class
 
 **Done when:** `curl localhost:8081/api/agents/java-dev/invoke` returns a response.
@@ -109,9 +65,9 @@ chmod +x cli/ai
 ### Phase 1 Done Checklist
 
 - [ ] Ollama running with at least one model
-- [ ] Agent runtime responding on :9000
+- [ ] AutoGen Studio serve/API responding
 - [ ] API gateway responding on :8081
-- [ ] At least 2 agent configs in registry
+- [ ] At least 2 agents/workflows defined in Studio (java-dev, general)
 - [ ] CLI wrapper working end-to-end
 - [ ] No client sends prompts directly to Ollama
 
@@ -121,8 +77,8 @@ chmod +x cli/ai
 
 - SSE streaming from gateway to client
 - Request/response logging (file or SQLite)
-- Agent registry CRUD API (`GET /api/agents`, `POST /api/agents`)
-- Runtime health check endpoint
+- Agent/workflow discovery backed by Studio
+- Studio health check integration in gateway
 
 ---
 
@@ -152,12 +108,15 @@ chmod +x cli/ai
 ollama serve
 
 # Terminal 2
-cd agent-runtime && uvicorn main:app --port 9000 --reload
+autogenstudio ui --host 127.0.0.1 --port 8082
 
 # Terminal 3
+autogenstudio serve --team path/to/team.json --host 127.0.0.1 --port 8084
+
+# Terminal 4
 cd api-gateway && ./mvnw spring-boot:run
 
-# Terminal 4 — test
+# Terminal 5 — test
 ./cli/ai java-dev "spring boot hello world controller"
 ```
 
@@ -167,7 +126,7 @@ cd api-gateway && ./mvnw spring-boot:run
 
 ```bash
 # Health checks
-curl http://localhost:9000/health
+curl http://localhost:8084/docs
 curl http://localhost:8081/actuator/health
 
 # List agents

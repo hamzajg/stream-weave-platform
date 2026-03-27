@@ -17,20 +17,20 @@
 │  │   GET  /api/agents                               │   │
 │  │   GET  /api/agents/{id}                          │   │
 │  └──────────────────┬──────────────────────────────┘   │
-│                     │  HTTP  (internal)                  │
+│                     │  HTTP  (internal)                 │
 │  ┌──────────────────▼──────────────────────────────┐   │
-│  │       Agent Runtime  :9000  (FastAPI + AutoGen)  │   │
-│  │   POST /run-agent                                │   │
+│  │         AutoGen Studio Serve  (HTTP API)         │   │
+│  │   (serves teams/workflows as endpoints)          │   │
 │  └──────────────────┬──────────────────────────────┘   │
-│                     │                                    │
+│                     │                                  │
 │  ┌──────────────────▼──────────────────────────────┐   │
 │  │          Ollama  :11434  (model provider)        │   │
 │  │   qwen3:4b  │  llama3  │  codellama  │  ...      │   │
 │  └─────────────────────────────────────────────────┘   │
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │         Agent Registry  (JSON / SQLite)          │   │
-│  │   agent configs: id, model, system, tools        │   │
+│  │              AutoGen Studio UI + DB              │   │
+│  │   agents/models/tools/workflows (managed in UI)  │   │
 │  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -44,10 +44,10 @@
 | Responsibility | Detail |
 |---------------|--------|
 | Expose REST API | `/api/agents/{id}/invoke` |
-| Resolve agent config | Load from registry by ID |
-| Route to runtime | Forward to Python service |
+| Resolve agent/workflow | Resolve via AutoGen Studio (serve/API) |
+| Route to execution | Forward request to Studio serve endpoint |
 | Handle streaming | SSE response wrapping |
-| Error handling | 404 on unknown agent, 502 on runtime failure |
+| Error handling | 404 on unknown agent/workflow, 502 on Studio failure |
 
 **Key controllers:**
 - `AgentController` — invoke endpoint
@@ -55,48 +55,26 @@
 
 ---
 
-### 2.2 Agent Runtime (Python FastAPI :9000)
+### 2.2 AutoGen Studio (UI + Serve/API)
 
 | Responsibility | Detail |
 |---------------|--------|
-| Receive agent execution requests | `POST /run-agent` |
-| Instantiate AutoGen agent | From passed config |
-| Execute prompt | Via AutoGen → Ollama |
-| Return normalized output | `{ output, tokens }` |
+| Manage agents/models/tools | UI + persistence (DB) |
+| Define workflows/teams | Saved and versionable (export/import) |
+| Serve execution API | Expose workflows/teams over HTTP for integration |
+| Execute prompts | Via AutoGen → Ollama (or any supported model provider) |
 
 **Simple execution path (Phase 1):**
 ```
-receive {agentId, input, config}
-  → build AssistantAgent(system_message=config.system)
-  → call Ollama via AutoGen
-  → return { output: response_text }
+Gateway request
+  → Studio serve endpoint
+  → AutoGen executes workflow/team
+  → returns normalized output/events
 ```
 
 ---
 
-### 2.3 Agent Registry
-
-**Phase 1:** JSON files in `agent-registry/agents/`
-
-**Schema:**
-```json
-{
-  "id": "java-dev",
-  "name": "Java Developer",
-  "model": "qwen3:4b",
-  "system": "You are a senior Java developer. Only output code.",
-  "mode": "code",
-  "temperature": 0.2,
-  "maxTokens": 2048,
-  "tools": []
-}
-```
-
-**Phase 2:** SQLite with CRUD API
-
----
-
-### 2.4 CLI Wrapper
+### 2.3 CLI Wrapper
 
 ```bash
 #!/bin/bash
@@ -118,19 +96,16 @@ curl -s http://localhost:8081/api/agents/$AGENT/invoke \
    POST /api/agents/java-dev/invoke
    { "input": "java Hello World!" }
 
-2. Gateway resolves agent config from registry:
-   { id: "java-dev", model: "qwen3:4b", system: "..." }
+2. Gateway resolves the agent/workflow mapping via Studio (or a served team/workflow export).
 
-3. Gateway calls runtime:
-   POST http://localhost:9000/run-agent
-   { "input": "...", "config": { ... } }
+3. Gateway calls AutoGen Studio serve/API:
+   POST http://localhost:<studio-serve-port>/<workflow-endpoint>
+   { "input": "..." }
 
-4. Runtime builds AutoGen agent and calls Ollama:
-   AssistantAgent(system_message=config.system)
-   → ollama.generate(model, prompt)
+4. Studio executes via AutoGen and calls Ollama:
+   workflow/team → model client → Ollama
 
-5. Runtime returns:
-   { "output": "public class HelloWorld {...}", "tokens": 120 }
+5. Studio returns output/events.
 
 6. Gateway wraps and returns to client:
    { "output": "...", "meta": { "agentId": "java-dev" } }
@@ -158,10 +133,10 @@ Runtime emits chunks → Gateway forwards as SSE:
 | Layer | Technology | Version |
 |-------|-----------|---------|
 | API Gateway | Spring Boot | 3.x |
-| Agent Runtime | FastAPI | 0.110+ |
-| Orchestration | AutoGen | 0.2.x |
+| Agent management + execution API | AutoGen Studio | latest |
+| Orchestration | AutoGen | via Studio |
 | Model Provider | Ollama | latest |
-| Agent Storage | JSON → SQLite | Phase 1 → 2 |
+| Agent Storage | Studio DB (SQLite default) | - |
 | CLI | Bash + curl + jq | - |
 
 ---
@@ -171,7 +146,8 @@ Runtime emits chunks → Gateway forwards as SSE:
 | Service | Port |
 |---------|------|
 | API Gateway | 8081 |
-| Agent Runtime | 9000 |
+| AutoGen Studio UI | configurable |
+| AutoGen Studio Serve/API | configurable |
 | Ollama | 11434 |
 
 ---
@@ -180,8 +156,8 @@ Runtime emits chunks → Gateway forwards as SSE:
 
 | Future Need | Extension |
 |------------|-----------|
-| Tool execution | Add `tools[]` to agent config + runtime tool handler |
+| Tool execution | Studio-managed tools attached to agents/workflows |
 | Memory | Add session context store (Redis) |
-| Multi-agent | AutoGen GroupChat in runtime |
+| Multi-agent | Studio workflows/teams (AutoGen GroupChat under the hood) |
 | Auth | API key middleware in gateway |
-| UI | React frontend calling same `/api/agents` endpoints |
+| UI | AutoGen Studio UI (admin) + optional product UI later |

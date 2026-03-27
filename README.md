@@ -15,7 +15,7 @@ Client (CLI / Aider / UI)
         ↓
 Agent Gateway  →  POST /api/agents/{id}/invoke
         ↓
-Agent Runtime  (Python / AutoGen)
+AutoGen Studio (Serve / API)
         ↓
 Ollama  (local model provider)
 ```
@@ -26,7 +26,7 @@ Ollama  (local model provider)
 
 | Vertical | Role | Components |
 |----------|------|------------|
-| **Local AI Platform** | Control plane — model execution, agent orchestration | Ollama, AutoGen, Agent Registry |
+| **Local AI Platform** | Control plane — model execution, agent orchestration | Ollama, AutoGen Studio |
 | **Client Integration** | Data plane — consume agents via stable API | CLI, Aider, Web/Mobile/Desktop |
 
 ---
@@ -36,11 +36,11 @@ Ollama  (local model provider)
 | Decision | Choice | Reason |
 |----------|--------|--------|
 | API layer | Spring Boot | Stable HTTP, easy routing, streaming support |
-| Agent runtime | Python + FastAPI | AutoGen is Python-native |
+| Agent runtime + UI | AutoGen Studio | Manage agents/models/tools in UI; serve workflows via HTTP |
 | Model provider | Ollama | Local, fast, multi-model |
-| Agent storage | JSON / SQLite (Phase 1) | Simple, no overhead for MVP |
+| Agent storage | AutoGen Studio DB | Studio persists agents/workflows (SQLite by default; configurable) |
 | Streaming | SSE (Server-Sent Events) | Mirrors Ollama, browser-compatible |
-| Gateway↔Runtime | HTTP (internal) | Simple, debuggable, upgradeable to queue |
+| Gateway↔Studio | HTTP (internal) | Simple, debuggable, compatible with Studio serve API |
 | Agent identity | Config-driven, not code | Agents are data — swappable without redeploy |
 
 ---
@@ -53,8 +53,8 @@ Ollama  (local model provider)
 ```
 /stream-weave-platform
  ├── api-gateway/          # Spring Boot — public API surface
- ├── agent-runtime/        # Python FastAPI — AutoGen execution engine
- ├── agent-registry/       # Agent config definitions (JSON)
+ ├── agent-runtime/        # (legacy/prototype) Python FastAPI runtime
+ ├── agent-registry/       # (legacy/prototype) JSON agent configs
  ├── cli/                  # Shell wrapper for terminal usage
  └── docs/
      ├── topdown.md        # Problem framing and decomposition
@@ -72,11 +72,14 @@ ollama serve
 ollama pull qwen3:4b
 ```
 
-### 2. Start Agent Runtime
+### 2. Start AutoGen Studio
 ```bash
-cd agent-runtime
-pip install -r requirements.txt
-uvicorn main:app --port 9000
+# Start Studio UI (manage agents, models, tools)
+autogenstudio ui --host 127.0.0.1 --port 8082
+
+# In a separate terminal: serve a workflow/team as an API
+# (port is configurable; see Studio docs)
+autogenstudio serve --team path/to/team.json --host 127.0.0.1 --port 8084
 ```
 
 ### 3. Start API Gateway
@@ -136,20 +139,9 @@ data: {"done": true}
 
 ---
 
-## Agent Config Example
+## Agent Definition Source of Truth
 
-Agents are defined in `agent-registry/agents/`:
-
-```json
-{
-  "id": "java-dev",
-  "model": "qwen3:4b",
-  "system": "You are a senior Java developer. Only output code. No explanation.",
-  "mode": "code",
-  "temperature": 0.2,
-  "tools": []
-}
-```
+Agents, models, and tools are managed in **AutoGen Studio** (UI + DB). The gateway resolves agent/workflow IDs against Studio (or an exported team/workflow file served by Studio) rather than loading JSON from this repo.
 
 ---
 
@@ -157,9 +149,9 @@ Agents are defined in `agent-registry/agents/`:
 
 | Phase | Scope |
 |-------|-------|
-| Phase 1 | API wrapper, single agent execution, CLI |
-| Phase 2 | Streaming, agent registry DB, request logs |
-| Phase 3 | Multi-agent workflows (AutoGen), tool execution, memory |
+| Phase 1 | API wrapper + AutoGen Studio integration + CLI |
+| Phase 2 | Streaming, request logs, workflow/agent discovery via Studio |
+| Phase 3 | Multi-agent workflows + tools (Studio-managed), memory |
 | Phase 4 | React UI, agent marketplace, multi-user |
 
 ---

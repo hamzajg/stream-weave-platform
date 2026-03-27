@@ -34,11 +34,11 @@ Root Problem: Clients are coupled to models
 ├── Problem A: No stable API surface
 │   └── Solution: Agent Gateway (Spring Boot)
 │
-├── Problem B: AutoGen is not HTTP-native
-│   └── Solution: Python FastAPI wrapper around AutoGen runtime
+├── Problem B: Need a UI + HTTP surface for agent orchestration
+│   └── Solution: AutoGen Studio (manage agents/models/tools + serve workflows via HTTP)
 │
-├── Problem C: No agent identity/registry
-│   └── Solution: JSON-based agent config store
+├── Problem C: Need persistent agent/model/tool management
+│   └── Solution: AutoGen Studio DB + export/import for versioning
 │
 ├── Problem D: Streaming not standardized
 │   └── Solution: SSE output from gateway
@@ -55,9 +55,9 @@ Root Problem: Clients are coupled to models
 |-----------|--------|
 | Fully local (no cloud) | Ollama only, no API keys |
 | Single developer machine | No Kubernetes, Docker Compose is max |
-| Python runtime required | AutoGen is Python — non-negotiable |
+| Python runtime required | AutoGen Studio is Python-native |
 | Java familiarity | API gateway in Spring Boot |
-| MVP speed | No DB for Phase 1 — JSON files |
+| MVP speed | Use Studio’s built-in persistence instead of building a registry UI |
 
 ---
 
@@ -65,9 +65,9 @@ Root Problem: Clients are coupled to models
 
 | Risk | Mitigation |
 |------|-----------|
-| AutoGen adds latency | Bypass it for simple single-agent calls |
-| Python process crashes | Gateway health-checks runtime on startup |
-| Agent config drift | Schema validate on load |
+| AutoGen/Studio adds latency | Keep gateway thin; treat Studio as the control plane |
+| Studio process crashes | Gateway health-checks Studio serve/API on startup |
+| Workflow drift | Export/import teams/workflows and version them |
 | Streaming complexity | SSE is simpler than WebSocket — use it |
 
 ---
@@ -77,7 +77,7 @@ Root Problem: Clients are coupled to models
 - [ ] `POST /api/agents/{id}/invoke` returns a response
 - [ ] At least 2 agents defined (java-dev, general)
 - [ ] CLI wrapper works end-to-end
-- [ ] System prompt is NOT sent by client — resolved from registry
+- [ ] System prompt/tools/models are NOT sent by client — resolved from Studio
 - [ ] No direct Ollama calls from any client
 
 ---
