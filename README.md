@@ -53,8 +53,7 @@ Ollama  (local model provider)
 ```
 /stream-weave-platform
  ├── api-gateway/          # Spring Boot — public API surface
- ├── agent-runtime/        # (legacy/prototype) Python FastAPI runtime
- ├── agent-registry/       # (legacy/prototype) JSON agent configs
+ ├── agent-studio/         # Autogen Studio
  ├── cli/                  # Shell wrapper for terminal usage
  └── docs/
      ├── topdown.md        # Problem framing and decomposition
@@ -67,12 +66,14 @@ Ollama  (local model provider)
 ## Quick Start (MVP)
 
 ### 1. Start Ollama
+
 ```bash
 ollama serve
 ollama pull qwen3:4b
 ```
 
 ### 2. Start AutoGen Studio
+
 ```bash
 # Start Studio UI (manage agents, models, tools)
 autogenstudio ui --host 127.0.0.1 --port 8082
@@ -83,6 +84,7 @@ autogenstudio serve --team path/to/team.json --host 127.0.0.1 --port 8084
 ```
 
 ### 3. Start API Gateway
+
 ```bash
 cd api-gateway
 ./mvnw spring-boot:run
@@ -90,6 +92,7 @@ cd api-gateway
 ```
 
 ### 4. Invoke an agent via CLI
+
 ```bash
 curl http://localhost:8081/api/agents/java-dev/invoke \
   -H "Content-Type: application/json" \
@@ -97,6 +100,7 @@ curl http://localhost:8081/api/agents/java-dev/invoke \
 ```
 
 Or use the CLI wrapper:
+
 ```bash
 ./cli/ai java-dev "create a Spring Boot REST controller"
 ```
@@ -108,6 +112,7 @@ Or use the CLI wrapper:
 ### `POST /api/agents/{agentId}/invoke`
 
 **Request**
+
 ```json
 {
   "input": "java Hello World!",
@@ -122,6 +127,7 @@ Or use the CLI wrapper:
 ```
 
 **Response**
+
 ```json
 {
   "output": "public class HelloWorld { ... }",
@@ -131,6 +137,7 @@ Or use the CLI wrapper:
 ```
 
 **Streaming** (`"stream": true`) returns SSE:
+
 ```
 data: {"delta": "public class"}
 data: {"delta": " HelloWorld"}
@@ -147,12 +154,14 @@ Agents, models, and tools are managed in **AutoGen Studio** (UI + DB). The gatew
 
 ## Roadmap
 
-| Phase | Scope |
-|-------|-------|
-| Phase 1 | API wrapper + AutoGen Studio integration + CLI |
+
+| Phase   | Scope                                                        |
+| ------- | ------------------------------------------------------------ |
+| Phase 1 | API wrapper + AutoGen Studio integration + CLI               |
 | Phase 2 | Streaming, request logs, workflow/agent discovery via Studio |
-| Phase 3 | Multi-agent workflows + tools (Studio-managed), memory |
-| Phase 4 | React UI, agent marketplace, multi-user |
+| Phase 3 | Multi-agent workflows + tools (Studio-managed), memory       |
+| Phase 4 | React UI, agent marketplace, multi-user                      |
+
 
 ---
 
@@ -160,3 +169,4 @@ Agents, models, and tools are managed in **AutoGen Studio** (UI + DB). The gatew
 
 > Agents are configuration, not code.  
 > The platform is the abstraction. Clients never talk to Ollama directly.
+
