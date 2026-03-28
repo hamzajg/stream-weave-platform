@@ -1,0 +1,13 @@
+{
+  "agentId": "team-lead",
+  "studioTeam": "Team Lead Team",
+  "description": "Assigns tasks to development agents, coordinates team efforts, monitors progress",
+  "capabilities": [
+    "task-assignment",
+    "team-coordination", 
+    "progress-monitoring",
+    "bottleneck-identification",
+    "resource-allocation",
+    "quality-gates"
+  ]
+}

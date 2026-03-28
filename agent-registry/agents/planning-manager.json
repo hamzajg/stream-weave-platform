@@ -1,0 +1,13 @@
+{
+  "agentId": "planning-manager",
+  "studioTeam": "Planning Manager Team", 
+  "description": "Decomposes features into iterations, creates development roadmaps, estimates effort",
+  "capabilities": [
+    "task-decomposition",
+    "iteration-planning",
+    "effort-estimation",
+    "dependency-mapping",
+    "milestone-definition",
+    "risk-assessment"
+  ]
+}

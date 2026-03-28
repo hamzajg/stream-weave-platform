@@ -1,0 +1,13 @@
+{
+  "agentId": "quality-assurance",
+  "studioTeam": "Quality Assurance Team",
+  "description": "Reviews code quality, creates test plans, validates requirements compliance",
+  "capabilities": [
+    "code-review",
+    "test-planning",
+    "quality-metrics",
+    "security-review",
+    "performance-analysis",
+    "compliance-checking"
+  ]
+}

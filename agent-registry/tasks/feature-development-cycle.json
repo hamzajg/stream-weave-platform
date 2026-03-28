@@ -1,0 +1,32 @@
+{
+  "taskType": "feature-development-cycle",
+  "aggregationStrategy": "LLM_SUMMARY",
+  "description": "End-to-end feature development from analysis to deployment",
+  "steps": [
+    {
+      "agentId": "product-manager",
+      "promptTemplate": "Analyze this feature request and create detailed specifications.\n\nFeature request: {input}\n\nProvide:\n1. Feature description and scope\n2. User stories and acceptance criteria\n3. Business value and priorities\n4. Success metrics",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "solution-architect",
+      "promptTemplate": "Design the technical implementation for this feature.\n\nFeature specs: {context}\n\nOriginal request: {input}\n\nProvide:\n1. Technical design approach\n2. API changes required\n3. Database schema changes\n4. Integration points\n5. Security considerations",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "planning-manager",
+      "promptTemplate": "Break down this feature into development tasks.\n\nTechnical design: {context}\n\nFeature specs: {input}\n\nCreate:\n1. Task breakdown with estimates\n2. Dependencies between tasks\n3. Development sequence\n4. Testing requirements",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "team-lead",
+      "promptTemplate": "Assign development tasks and coordinate execution.\n\nTask breakdown: {context}\n\nTechnical design: {input}\n\nProvide:\n1. Developer task assignments\n2. Coordination plan\n3. Review checkpoints\n4. Integration strategy",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "quality-assurance",
+      "promptTemplate": "Create quality assurance plan for this feature.\n\nExecution plan: {context}\n\nFeature scope: {input}\n\nDefine:\n1. Code review checklist\n2. Testing strategy\n3. Quality gates\n4. Acceptance criteria validation",
+      "mode": "SEQUENTIAL"
+    }
+  ]
+}

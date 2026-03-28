@@ -1,0 +1,32 @@
+{
+  "taskType": "autonomous-project-build",
+  "aggregationStrategy": "LLM_SUMMARY",
+  "description": "Complete autonomous project development from documentation to deployed solution",
+  "steps": [
+    {
+      "agentId": "product-manager",
+      "promptTemplate": "Read and analyze the provided documentation and requirements. Define comprehensive features, user stories, and acceptance criteria for this project.\n\nInput: {input}\n\nFocus on:\n1. Core business requirements\n2. User personas and needs\n3. Feature prioritization\n4. Success metrics\n5. Technical constraints",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "solution-architect", 
+      "promptTemplate": "Based on the product requirements from the product manager, design a complete system architecture.\n\nPrevious context: {context}\n\nProject requirements: {input}\n\nProvide:\n1. System architecture overview\n2. Technology stack recommendations\n3. API design specifications\n4. Database schema design\n5. Security architecture\n6. Deployment architecture",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "planning-manager",
+      "promptTemplate": "Decompose the architecture and features into actionable development iterations with detailed task breakdowns.\n\nProduct requirements: {context}\n\nArchitecture: {input}\n\nCreate:\n1. Development roadmap with milestones\n2. Iteration breakdown (2-week sprints)\n3. Task dependencies and critical path\n4. Effort estimates for each task\n5. Risk assessment and mitigation strategies",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "team-lead",
+      "promptTemplate": "Assign the decomposed tasks to appropriate development agents and create execution plan.\n\nPlanning breakdown: {context}\n\nArchitecture details: {input}\n\nProvide:\n1. Task assignments to specific developer agents\n2. Execution timeline and sequencing\n3. Coordination requirements between agents\n4. Quality gates and review points\n5. Progress monitoring strategy",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "quality-assurance",
+      "promptTemplate": "Review the complete project plan and provide quality assurance strategy.\n\nTeam assignments: {context}\n\nProject scope: {input}\n\nDefine:\n1. Code review processes\n2. Testing strategy (unit, integration, e2e)\n3. Quality metrics and acceptance criteria\n4. Security review checkpoints\n5. Performance testing requirements",
+      "mode": "SEQUENTIAL"
+    }
+  ]
+}

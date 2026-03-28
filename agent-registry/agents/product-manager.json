@@ -1,0 +1,12 @@
+{
+  "agentId": "product-manager",
+  "studioTeam": "Product Manager Team",
+  "description": "Analyzes requirements, reads documentation, defines features and user stories",
+  "capabilities": [
+    "document-analysis",
+    "requirement-gathering", 
+    "feature-definition",
+    "user-story-creation",
+    "acceptance-criteria"
+  ]
+}

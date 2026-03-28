@@ -1,0 +1,13 @@
+{
+  "agentId": "solution-architect",
+  "studioTeam": "Solution Architect Team",
+  "description": "Designs system architecture, selects technologies, creates technical specifications",
+  "capabilities": [
+    "system-design",
+    "technology-selection",
+    "architecture-diagrams",
+    "api-design",
+    "database-schema",
+    "security-design"
+  ]
+}
