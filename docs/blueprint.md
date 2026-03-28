@@ -3,235 +3,205 @@
 ## 1. Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                   VERTICAL 2 — Clients                        │
-│      CLI  │  Aider  │  Web App  │  Mobile  │  Bot / Agent    │
-└─────────────────────────┬────────────────────────────────────┘
-                          │  HTTP / SSE
-┌─────────────────────────▼────────────────────────────────────┐
-│                VERTICAL 1 — Local AI Platform                 │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │       API Gateway  :8081  (Spring Boot)               │  │
-│  │   POST /api/agents/{id}/invoke                        │  │
-│  │   GET  /api/agents                                    │  │
-│  │   GET  /api/agents/{id}                               │  │
-│  └────────────┬────────────────────────┬─────────────────┘  │
-│               │                        │                     │
-│    registry   │                        │ invoke run          │
-│    lookup     │                        │ (internal HTTP)     │
-│               ▼                        ▼                     │
-│  ┌────────────────────┐  ┌─────────────────────────────┐   │
-│  │  Agent Registry    │  │  AutoGen Studio  :8080       │   │
-│  │  (JSON / SQLite)   │  │                             │   │
-│  │                    │  │  ┌──────────┐ ┌──────────┐  │   │
-│  │  id → studioTeam   │  │  │ Studio   │ │ REST API │  │   │
-│  │  mapping           │  │  │ UI       │ │ /api/runs│  │   │
-│  │                    │  │  └──────────┘ └────┬─────┘  │   │
-│  └────────────────────┘  └───────────────────┬──────────┘  │
-│                                              │              │
-│                              ┌───────────────▼────────┐    │
-│                              │   Ollama  :11434        │    │
-│                              │   qwen3:4b · llama3     │    │
-│                              └────────────────────────┘    │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    VERTICAL 2 — Clients                           │
+│    CLI  │  Aider  │  Web  │  Mobile  │  Bot                      │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │ HTTP / SSE
+┌────────────────────────────▼─────────────────────────────────────┐
+│                 VERTICAL 1 — Local AI Platform                    │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  API Gateway :8081  (Spring Boot)                        │   │
+│  │  POST /api/agents/{id}/invoke  (single agent)            │   │
+│  │  POST /api/tasks               (multi-agent, blocking)   │   │
+│  │  POST /api/tasks/stream        (multi-agent, SSE)        │   │
+│  └───────┬──────────────────────────┬───────────────────────┘   │
+│          │ single agent             │ multi-agent task           │
+│          │                          ▼                            │
+│          │      ┌─────────────────────────────────────┐         │
+│          │      │  Reactive Message Bus               │         │
+│          │      │  MessageBus interface               │         │
+│          │      │  ReactorMessageBus (Sinks.Many)     │         │
+│          │      └────────┬────────────────┬───────────┘         │
+│          │               │                │                      │
+│          │    ┌──────────▼──────┐  ┌──────▼──────────┐         │
+│          │    │ SupervisorActor │  │  WorkerActor     │         │
+│          │    │                 │  │  (any agentId)   │         │
+│          │    │ - resolve plan  │  │  - invoke Studio │         │
+│          │    │ - dispatch steps│  │  - publish result│         │
+│          │    │ - aggregate     │  └──────────────────┘         │
+│          │    └─────────────────┘                                │
+│          │               │                                       │
+│          └───────────────┤                                       │
+│                          ▼                                       │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  AutoGen Studio :8080  (control plane)                   │   │
+│  │  POST /api/runs  ·  GET /api/agents                      │   │
+│  └──────────────────────────┬───────────────────────────────┘   │
+│                             ▼                                    │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Ollama :11434                                           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────┐  ┌────────────────────────────────┐  │
+│  │  Agent Registry      │  │  Task Registry                  │  │
+│  │  agents/*.json       │  │  tasks/*.json                   │  │
+│  │  id → studioTeam     │  │  taskType → ExecutionPlan       │  │
+│  └──────────────────────┘  └────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Component Responsibilities
+## 2. Message Bus — Interface and Swap Path
 
-### 2.1 API Gateway (Spring Boot :8081)
+```java
+// Phase 1 — already wired
+@Service ReactorMessageBus implements MessageBus
+  → Sinks.Many<AgentMessage> (in-memory, single JVM)
 
-| Responsibility | Detail |
-|---------------|--------|
-| Public REST API | `/api/agents/{id}/invoke`, `/api/agents` |
-| Agent resolution | Registry-first → Studio fallback |
-| Studio bridge | Translates invoke request → AutoGen Studio `/api/runs` |
-| SSE streaming | Proxies Studio streaming response to client |
-| Error surface | 404 for unresolved agents, 502 for Studio failures |
+// Phase 2 — zero actor code change required
+@Service RedisMessageBus implements MessageBus
+  → RedisTemplate pub/sub (persistent, multi-node)
+```
 
-**Services:**
-- `AgentResolverService` — orchestrates registry + Studio fallback
-- `AgentRegistryService` — reads JSON config files
-- `StudioClient` — WebClient wrapper for AutoGen Studio API
+The `MessageBus` interface exposes four methods:
+- `publish(AgentMessage)` → `Mono<Void>`
+- `subscribe(Class<T>, recipientId)` → `Flux<T>`
+- `subscribeAll(Class<T>)` → `Flux<T>`
+- `subscribeForTask(Class<T>, taskId)` → `Flux<T>`
 
 ---
 
-### 2.2 AutoGen Studio (:8080)
-
-Launched via:
-```bash
-autogenstudio serve --port 8080
-```
-
-| Capability | Detail |
-|-----------|--------|
-| Agent/team builder | Visual UI at `http://localhost:8080` |
-| REST API | `POST /api/runs` — execute a team/agent |
-| Agent listing | `GET /api/agents` — used by gateway fallback |
-| Session management | Built-in, per run |
-| Model config | Points to Ollama via model provider settings |
-
-**Studio API used by gateway:**
+## 3. Message Hierarchy (Sealed)
 
 ```
-POST http://localhost:8080/api/runs
-{
-  "message": "java Hello World!",
-  "team_id": "<studio-team-uuid>"
-}
+AgentMessage  (abstract sealed)
+├── TaskMessage           gateway → supervisor
+├── AgentTaskMessage      supervisor → worker
+├── AgentResultMessage    worker → supervisor
+├── TaskResultMessage     supervisor → gateway
+└── ErrorMessage          any → supervisor
+```
 
-GET http://localhost:8080/api/agents
-→ [ { "id": "...", "name": "Java Developer Team", ... } ]
+Every message carries: `messageId`, `taskId`, `senderId`, `recipientId`, `timestamp`.  
+`taskId` links all messages in a single task lifecycle — used for per-task subscriptions.
+
+---
+
+## 4. Supervisor Decision Flow
+
+```
+TaskMessage(taskType, input)
+    │
+    ▼
+TaskRegistryService.findByType(taskType)
+    │
+  found ──────────────────────────────→ TaskPlan (source="config")
+    │ not found
+    ▼
+TaskPlannerService.plan(taskType, input)
+    → calls AutoGen Studio Supervisor team
+    → parses JSON { steps[], aggregationStrategy }
+    → on parse failure: single-agent fallback (general)
+    │
+    ▼ TaskPlan (source="llm" | "fallback")
+    │
+    ▼
+Execute steps
+    ├── SEQUENTIAL: concatMap, each step gets prior {context}
+    └── PARALLEL:   Mono.when(), steps fire simultaneously
+    │
+    ▼
+Aggregate
+    ├── LAST:        return final step output
+    ├── CONCAT:      join all outputs with \n\n
+    └── LLM_SUMMARY: Supervisor LLM synthesises all outputs
+    │
+    ▼
+TaskResultMessage → bus → gateway → client
 ```
 
 ---
 
-### 2.3 Agent Registry
+## 5. Task Plan Config Schema
 
-**Location:** `agent-registry/agents/`
+`agent-registry/tasks/<taskType>.json`
 
-**Purpose:** Maps stable client-facing IDs to AutoGen Studio team names/IDs.
-
-**Schema:**
 ```json
 {
-  "id": "java-dev",
-  "studioTeam": "Java Developer Team",
-  "description": "Senior Java developer — outputs code only",
-  "tags": ["code", "java"]
+  "taskType": "code-review",
+  "aggregationStrategy": "LLM_SUMMARY",
+  "steps": [
+    {
+      "agentId": "java-dev",
+      "promptTemplate": "Review this code:\n{input}",
+      "mode": "SEQUENTIAL"
+    },
+    {
+      "agentId": "reviewer",
+      "promptTemplate": "Prior review:\n{context}\n\nNow give security feedback on:\n{input}",
+      "mode": "SEQUENTIAL"
+    }
+  ]
 }
 ```
 
-**Resolution logic:**
-1. Gateway reads `java-dev.json` → gets `studioTeam: "Java Developer Team"`
-2. Gateway calls Studio API to resolve team name → team UUID
-3. Gateway calls `POST /api/runs` with that UUID
-
-**Registry is the source of truth for agent IDs.**  
-**Studio is the source of truth for agent execution configs.**
+Prompt templates support two variables:
+- `{input}` — the original user prompt
+- `{context}` — accumulated output from all prior sequential steps
 
 ---
 
-### 2.4 Agent Resolution — Detailed Flow
+## 6. SSE Stream Event Format
 
 ```
-POST /api/agents/java-dev/invoke  {input: "..."}
-          │
-          ▼
-AgentResolverService
-          │
-          ├─ Step 1: AgentRegistryService.findById("java-dev")
-          │    Found → AgentRef { studioTeam: "Java Developer Team" }
-          │    Not found → Step 2
-          │
-          ├─ Step 2: StudioClient.listAgents()
-          │    Match name "java-dev" or "Java Developer Team"
-          │    Found → use Studio agent ID
-          │    Not found → throw 404
-          │
-          ▼
-StudioClient.runAgent(teamId, input)
-     POST http://localhost:8080/api/runs
-          │
-          ▼
-     AutoGen Studio executes → Ollama
-          │
-          ▼
-     Response mapped → { output, meta }
-          │
-          ▼
-     Client ← HTTP / SSE
+POST /api/tasks/stream
+
+data: {"event":"step","agentId":"java-dev","step":1,"output":"..."}
+data: {"event":"step","agentId":"reviewer","step":2,"output":"..."}
+data: {"event":"done","taskId":"abc-123","output":"...final..."}
+
+-- or on failure --
+
+data: {"event":"error","taskId":"abc-123","message":"Agent timeout"}
 ```
 
 ---
 
-### 2.5 CLI Wrapper
+## 7. AutoGen Studio Teams Required
 
-```bash
-#!/bin/bash
-# Usage: ai <agentId> "<prompt>"
-AGENT=$1
-PROMPT=$2
+| Team name (in Studio UI) | Used by |
+|--------------------------|---------|
+| Java Developer Team | `java-dev` agent |
+| Python Developer Team | `python-dev` agent |
+| General Team | `general` agent |
+| Reviewer Team | `reviewer` agent |
+| Supervisor | supervisor agent, LLM planner, LLM_SUMMARY aggregation |
 
-curl -s http://localhost:8081/api/agents/$AGENT/invoke \
-  -H "Content-Type: application/json" \
-  -d "{\"input\": \"$PROMPT\"}" | jq -r '.output'
-```
-
----
-
-## 3. Gateway Code Structure
-
-```
-api-gateway/src/main/java/com/localai/gateway/
-├── controller/
-│   └── AgentController.java          # REST endpoints
-├── service/
-│   ├── AgentResolverService.java     # registry-first, Studio fallback
-│   ├── AgentRegistryService.java     # reads JSON registry files
-│   └── StudioClient.java             # WebClient → AutoGen Studio API
-├── model/
-│   ├── AgentRef.java                 # registry entry POJO
-│   ├── InvokeRequest.java            # client request body
-│   ├── InvokeResponse.java           # client response body
-│   └── StudioRun.java                # Studio /api/runs request/response
-└── config/
-    └── WebClientConfig.java          # WebClient bean
-```
+Team names must exactly match `studioTeam` in each agent's registry JSON.
 
 ---
 
-## 4. Streaming Flow (SSE)
+## 8. Port Map
 
-```
-Client opens SSE connection:
-  POST /api/agents/java-dev/invoke  { stream: true }
-
-Gateway:
-  Calls StudioClient.runAgentStream(teamId, input)
-  Studio returns chunked HTTP stream
-  Gateway wraps each chunk as SSE event:
-    data: {"delta": "public class"}
-    data: {"delta": " HelloWorld"}
-    data: {"done": true}
-
-Client reads SSE stream and renders tokens as they arrive.
-```
+| Service | Port |
+|---------|------|
+| AutoGen Studio | 8080 |
+| API Gateway | 8081 |
+| Ollama | 11434 |
 
 ---
 
-## 5. Technology Stack
+## 9. Extension Points
 
-| Layer | Technology | Version |
-|-------|-----------|---------|
-| API Gateway | Spring Boot | 3.2.x |
-| Control plane | AutoGen Studio | 0.4.x |
-| Model provider | Ollama | latest |
-| Agent storage | JSON → SQLite (Phase 2) | — |
-| HTTP client | Spring WebFlux WebClient | — |
-| CLI | Bash + curl + jq | — |
-
----
-
-## 6. Port Map
-
-| Service | Port | Notes |
-|---------|------|-------|
-| AutoGen Studio UI + API | 8080 | Must start before gateway |
-| API Gateway | 8081 | Public surface for all clients |
-| Ollama | 11434 | Internal only — never exposed to clients |
-
----
-
-## 8. Extension Points
-
-| Future Need | Extension |
-|------------|-----------|
-| Tool execution | Define tools in Studio UI — no gateway change |
-| Multi-agent teams | Build teams in Studio UI — no gateway change |
-| Memory / sessions | Pass `session_id` to Studio `/api/runs` |
-| Auth | API key middleware in Spring Boot gateway |
-| UI | React frontend hitting same `/api/agents` endpoints |
-| New model | Add model in Studio settings — no code change |
+| Future need | How to extend |
+|-------------|--------------|
+| New agent | Add `agent-registry/agents/<id>.json` + create team in Studio UI |
+| New task type | Add `agent-registry/tasks/<type>.json` — no code change |
+| Peer-to-peer agent messaging | Worker publishes to specific `recipientId`; target worker subscribes |
+| Redis bus | Implement `RedisMessageBus implements MessageBus`, swap Spring bean |
+| Tool execution | Define tools in Studio team config — gateway orchestration unchanged |
+| Task persistence | Persist `taskResults` map to Redis hash before clearing |
+| Dynamic team composition | Supervisor LLM plan references agents not in registry → Studio fallback |

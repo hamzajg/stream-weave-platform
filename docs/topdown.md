@@ -2,79 +2,74 @@
 
 ## 1. Root Problem
 
-Developers and automation tools need to call AI capabilities without being coupled to specific models, providers, or prompt engineering details.
-
-Currently, every client must know:
-- Which model to call
-- How to format the prompt
-- What system message to use
-- How to parse the response
-
-This is **model-coupling** — it breaks every client when the model changes.
+Complex business tasks cannot be solved by a single AI agent. They require decomposition, specialisation, and synthesis across multiple agents — while remaining transparent, fault-tolerant, and extensible.
 
 ---
 
 ## 2. Desired State
 
-A client should only need to know:
+A client submits a task with a type and a prompt. The platform:
+- determines which agents are needed (automatically)
+- coordinates their execution (sequentially or in parallel)
+- aggregates their outputs
+- streams progress back in real time
 
-```
-WHO to call (agent ID) + WHAT to ask (input)
-```
-
-Everything else — model, system prompt, tools, team topology, temperature — is the platform's concern.
+The client never knows how many agents ran or how they were coordinated.
 
 ---
 
 ## 3. Problem Decomposition
 
 ```
-Root Problem: Clients are coupled to models
+Root Problem: Complex tasks need multiple coordinated agents
 │
-├── Problem A: No stable API surface for clients
-│   └── Solution: Spring Boot API Gateway :8081
-│       POST /api/agents/{id}/invoke
+├── Problem A: How does the platform know which agents to involve?
+│   └── Solution: Config-first task registry + LLM fallback planner
+│       - Known task types → JSON plan loaded from agent-registry/tasks/
+│       - Unknown task types → Supervisor LLM generates a plan on the fly
 │
-├── Problem B: Need an agent execution engine (orchestration)
-│   └── Solution: AutoGen Studio (autogenstudio serve :8080)
-│       - Built-in UI for defining agents and teams
-│       - Built-in REST API: /api/runs, /api/sessions, /api/agents
-│       - No custom Python runtime needed
+├── Problem B: How do agents communicate without coupling?
+│   └── Solution: Actor model + reactive message bus
+│       - Agents never call each other directly
+│       - All communication is typed messages on the bus
+│       - MessageBus interface abstracts Reactor Sinks (now) → Redis (later)
 │
-├── Problem C: Agent ID → AutoGen Studio team name mapping
-│   └── Solution: Registry-first, Studio fallback
-│       - Registry (JSON): owns the ID→studioTeam mapping
-│       - Studio API: fallback, match by agent name dynamically
+├── Problem C: How does the supervisor handle sequential vs parallel steps?
+│   └── Solution: TaskPlanStep.Mode (SEQUENTIAL | PARALLEL)
+│       - SEQUENTIAL: each step waits for prior output (passed as {context})
+│       - PARALLEL: all steps fire together with Mono.when()
 │
-├── Problem D: Streaming not standardized
-│   └── Solution: SSE output from gateway
-│       Gateway proxies Studio streaming → SSE to client
+├── Problem D: How are multi-agent outputs combined?
+│   └── Solution: AggregationStrategy per task plan
+│       - LAST: return only final step (pipeline pattern)
+│       - CONCAT: ordered join of all outputs
+│       - LLM_SUMMARY: supervisor synthesises all outputs
 │
-└── Problem E: No CLI ergonomics
-    └── Solution: Shell wrapper
-        ai <agentId> "<prompt>"
+├── Problem E: How does the client see progress during a long task?
+│   └── Solution: POST /api/tasks/stream → SSE
+│       - AgentResultMessage events → step SSE events
+│       - TaskResultMessage → done SSE event
+│
+└── Problem F: What happens when an agent fails mid-task?
+    └── Solution: ErrorMessage → SupervisorActor short-circuits
+        - Publishes TaskResultMessage.failed() immediately
+        - Cleans up per-task state
+        - Client receives error event on SSE or 500 on blocking call
 ```
 
 ---
 
-## 4. Why AutoGen Studio Replaces the Custom Runtime
+## 4. Actor Model Mapping
 
-The custom Python FastAPI service (`agent-runtime/`) that:
-- Wrapped AutoGen agent instantiation
-- Called Ollama directly
-- Had to be maintained alongside the gateway
-
-AutoGen Studio's `autogenstudio serve` provides all of this out of the box:
-
-| Capability | Before (custom runtime) | Now (AutoGen Studio) |
-|-----------|------------------------|----------------------|
-| Agent execution | Hand-rolled Python | Studio REST API |
-| Agent definitions | JSON + code | Studio UI (visual) |
-| Multi-agent teams | DIY | Studio team builder |
-| Session management | Not implemented | Studio built-in |
-| API surface | FastAPI /run-agent | Studio /api/runs |
-
-The custom runtime is eliminated entirely. The gateway now bridges to Studio's API.
+```
+Traditional call-based                Actor model (this platform)
+──────────────────────────────────    ──────────────────────────────────────
+controller.invokeAgent(agentId)       bus.publish(new AgentTaskMessage(...))
+wait for return value                 subscribe to AgentResultMessage for taskId
+handle exception inline               ErrorMessage flows to supervisor
+tight coupling                        zero coupling — agents don't know each other
+hard to add new agents                add agent + subscribe to bus → done
+```
 
 ---
 
@@ -82,11 +77,11 @@ The custom runtime is eliminated entirely. The gateway now bridges to Studio's A
 
 | Constraint | Impact |
 |-----------|--------|
-| Fully local (no cloud) | Ollama only, no external API keys |
-| Single developer machine | Docker Compose is max infra complexity |
-| Java familiarity | API gateway in Spring Boot |
-| MVP speed | JSON registry for Phase 1, no DB overhead |
-| AutoGen Studio availability | Must be running before gateway starts |
+| Fully local | Ollama + AutoGen Studio only |
+| Single JVM (Phase 1) | Reactor Sinks is sufficient; Redis for multi-node later |
+| AutoGen Studio must run | Gateway health-checks Studio on startup |
+| LLM plan parsing can fail | Fallback to single-agent general on any parse error |
+| Timeout risk on long tasks | POST /api/tasks has 5-minute timeout; use /stream for long tasks |
 
 ---
 
@@ -94,49 +89,30 @@ The custom runtime is eliminated entirely. The gateway now bridges to Studio's A
 
 | Risk | Mitigation |
 |------|-----------|
-| AutoGen Studio API changes between versions | Pin `autogenstudio` version in requirements |
-| Studio not running when gateway starts | Gateway health check polls Studio on startup |
-| Agent name mismatch (registry vs Studio) | Fallback to Studio API list; log warnings on mismatch |
-| Studio streaming format changes | Isolate Studio client behind an interface — swap without touching gateway |
-| Registry and Studio out of sync | Registry is the source of truth for IDs; Studio is the source of truth for execution |
+| LLM generates invalid plan JSON | `extractJson()` strips fences; parse error → single-agent fallback |
+| Agent step times out | Per-step Reactor timeout; ErrorMessage triggers task failure |
+| Bus backpressure under load | Sinks buffer 1024 messages; overflow logged, emit fails gracefully |
+| Task state leaks | `taskResults` map cleared in `doFinally()` and on error handler |
+| Studio unavailable mid-task | StudioClient error propagates as ErrorMessage → task fails cleanly |
 
 ---
 
-## 7. Agent Resolution Flow
+## 7. Success Criteria (Phase 1)
 
-```
-Gateway receives: POST /api/agents/java-dev/invoke
-
-Step 1 — Registry lookup
-  Read agent-registry/agents/java-dev.json
-  Found? → use studioTeam: "Java Developer Team"
-  Not found? → Step 2
-
-Step 2 — Studio fallback
-  GET http://localhost:8080/api/agents
-  Find agent where name matches "java-dev" (case-insensitive)
-  Found? → use that agent's team/id
-  Not found? → 404 to client
-```
+- [ ] `POST /api/tasks` with known taskType runs correct agents in correct order
+- [ ] `POST /api/tasks` with unknown taskType triggers LLM planner and runs
+- [ ] Sequential steps receive prior output as `{context}` in their prompt
+- [ ] Parallel steps all fire simultaneously and results collected correctly
+- [ ] `POST /api/tasks/stream` emits one SSE event per completed step
+- [ ] Failed step publishes ErrorMessage; supervisor emits failed TaskResultMessage
+- [ ] Single-agent `/api/agents/{id}/invoke` still works unchanged
 
 ---
 
-## 8. Success Criteria (MVP)
+## 8. Non-Goals (Phase 1)
 
-- [ ] `POST /api/agents/{id}/invoke` triggers a real AutoGen Studio run
-- [ ] Registry-first resolution works for known agents
-- [ ] Studio fallback resolves unknown agents by name
-- [ ] CLI wrapper works end-to-end
-- [ ] No client sends requests to Ollama or AutoGen Studio directly
-- [ ] Gateway returns 404 with a clear message for unresolvable agents
-
----
-
-## 9. Non-Goals (Phase 1)
-
-- Authentication / API keys
-- Multi-user support
-- Persistent conversation memory
-- Tool execution (file, web, code)
-- Web UI
-- Custom Python code in agents (Studio UI only)
+- Agent-to-agent peer messaging (Phase 3)
+- Dynamic team composition at runtime
+- Task persistence across restarts
+- Redis-backed bus (interface is ready, impl is Phase 2)
+- Tool execution within agent steps
