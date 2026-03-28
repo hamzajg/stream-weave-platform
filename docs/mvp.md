@@ -1,142 +1,205 @@
 # MVP Startup Plan
 
-## Phase 1 — Core Platform (Target: Working CLI → Agent → Ollama)
+## Phase 1 — Core Platform (Working CLI → Gateway → AutoGen Studio → Ollama)
 
 ### Goal
-A developer can run `ai java-dev "create a REST controller"` and get code back.
+`./cli/ai java-dev "create a REST controller"` returns code via AutoGen Studio.
 
 ---
 
-### Step 1: AutoGen Studio UI (manage agents, models, tools)
+### Step 1: AutoGen Studio Setup
 
-Run AutoGen Studio UI and configure your local model provider (Ollama).
+```bash
+pip install autogenstudio
+autogenstudio serve --port 8080
+```
 
-Create at least two agents/workflows in Studio:
-- `java-dev`
-- `general`
+Open `http://localhost:8080` and:
 
-**Done when:** Agents/workflows exist in Studio and you can run them in the UI.
+1. **Add model provider** — point to Ollama:
+   - Type: `Ollama`
+   - Base URL: `http://localhost:11434`
+   - Model: `qwen3:4b`
+
+2. **Create agents:**
+   - Name: `Java Developer`
+   - System message: `You are a senior Java developer. Only output clean, working code. No explanation.`
+   - Model: `qwen3:4b`
+
+   - Name: `General Assistant`
+   - System message: `You are a helpful, concise assistant.`
+   - Model: `qwen3:4b`
+
+3. **Create teams** (one per agent for Phase 1):
+   - Team: `Java Developer Team` → agent: `Java Developer`
+   - Team: `General Team` → agent: `General Assistant`
+
+4. Note the team names exactly — they must match the registry entries.
+
+**Done when:** Studio UI shows agents and teams, and a test run in the UI returns output.
 
 ---
 
-### Step 2: AutoGen Studio Serve/API (execution endpoint)
+### Step 2: Agent Registry
 
-Start AutoGen Studio in serve/API mode to expose your selected team/workflow over HTTP so the gateway can invoke it.
+Update `agent-registry/agents/` to map IDs to Studio team names:
 
-**Done when:** Studio serve mode is running and its API docs are reachable (typically at `/docs` on the serve port).
+`java-dev.json`
+```json
+{
+  "id": "java-dev",
+  "studioTeam": "Java Developer Team",
+  "description": "Senior Java developer — outputs code only",
+  "tags": ["code", "java"]
+}
+```
+
+`general.json`
+```json
+{
+  "id": "general",
+  "studioTeam": "General Team",
+  "description": "General purpose assistant",
+  "tags": ["chat"]
+}
+```
+
+**Done when:** JSON files exist and team names match Studio exactly.
 
 ---
 
 ### Step 3: API Gateway (Spring Boot)
 
-**Location:** `api-gateway/`
+Services to implement:
 
-Classes to create:
-- `AgentController` — `POST /api/agents/{id}/invoke`
-- `StudioClient` (or equivalent) — HTTP call to AutoGen Studio serve/API
-- `AgentConfig` — model class
+**`AgentRegistryService`** — reads JSON files from `agent-registry/agents/`
 
-**Done when:** `curl localhost:8081/api/agents/java-dev/invoke` returns a response.
+**`StudioClient`** — WebClient wrapper:
+- `Mono<String> resolveTeamId(String teamName)` — calls `GET /api/agents`, matches by name
+- `Mono<String> runAgent(String teamId, String input)` — calls `POST /api/runs`
+
+**`AgentResolverService`** — registry-first, Studio fallback:
+```
+findById(agentId)
+  → registry hit? use studioTeam
+  → miss? call StudioClient.listAgents(), match name
+  → still miss? throw AgentNotFoundException → 404
+```
+
+**`AgentController`** — exposes:
+- `GET /api/agents`
+- `GET /api/agents/{id}`
+- `POST /api/agents/{id}/invoke`
+
+**Done when:** `curl localhost:8081/api/agents/java-dev/invoke` returns a real Studio response.
 
 ---
 
 ### Step 4: CLI Wrapper
 
-**Location:** `cli/ai`
-
-```bash
-#!/bin/bash
-AGENT=${1:-general}
-PROMPT=$2
-curl -s http://localhost:8081/api/agents/$AGENT/invoke \
-  -H "Content-Type: application/json" \
-  -d "{\"input\": \"$PROMPT\"}" | jq -r '.output'
-```
-
 ```bash
 chmod +x cli/ai
-# Add to PATH or symlink to /usr/local/bin/ai
+./cli/ai java-dev "hello world in java"
+# Should print code
+./cli/ai general "explain REST in 2 sentences"
+# Should print explanation
 ```
 
-**Done when:** `./cli/ai java-dev "Hello World"` prints code.
+**Done when:** Both calls return correct output end-to-end.
 
 ---
 
-### Phase 1 Done Checklist
+### Phase 1 Checklist
 
-- [ ] Ollama running with at least one model
-- [ ] AutoGen Studio serve/API responding
-- [ ] API gateway responding on :8081
-- [ ] At least 2 agents/workflows defined in Studio (java-dev, general)
-- [ ] CLI wrapper working end-to-end
-- [ ] No client sends prompts directly to Ollama
-
----
-
-## Phase 2 — Streaming + Observability
-
-- SSE streaming from gateway to client
-- Request/response logging (file or SQLite)
-- Agent/workflow discovery backed by Studio
-- Studio health check integration in gateway
+- [ ] Ollama running with `qwen3:4b`
+- [ ] AutoGen Studio running on :8080
+- [ ] At least 2 agents + 2 teams defined in Studio UI
+- [ ] Registry entries match Studio team names exactly
+- [ ] Gateway resolves and invokes via registry-first path
+- [ ] Gateway falls back to Studio list when registry misses
+- [ ] Gateway returns 404 for unknown agents
+- [ ] CLI wrapper works end-to-end for all defined agents
 
 ---
 
-## Phase 3 — Multi-Agent + Tools
-
-- AutoGen GroupChat for multi-agent workflows
-- Tool definitions in agent config (file read, web search, code exec)
-- Session context (short-term memory per conversation)
-- Multi-turn conversation support
-
----
-
-## Phase 4 — UI + Distribution
-
-- React frontend (Vite)
-- Agent management dashboard
-- Conversation history viewer
-- Agent marketplace (import/export configs)
-- Multi-user with API key auth
-
----
-
-## Local Dev Startup Order
+### Local Dev Startup Order
 
 ```bash
 # Terminal 1
 ollama serve
 
 # Terminal 2
-autogenstudio ui --host 127.0.0.1 --port 8082
+autogenstudio serve --port 8080
 
 # Terminal 3
-autogenstudio serve --team path/to/team.json --host 127.0.0.1 --port 8084
-
-# Terminal 4
 cd api-gateway && ./mvnw spring-boot:run
 
-# Terminal 5 — test
-./cli/ai java-dev "spring boot hello world controller"
+# Terminal 4 — smoke test
+curl http://localhost:8081/api/agents
+curl -X POST http://localhost:8081/api/agents/java-dev/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"input": "hello world in java"}'
+./cli/ai java-dev "spring boot rest controller"
 ```
+
+---
+
+## Phase 2 — Streaming + Observability
+
+- SSE streaming: gateway proxies Studio chunked response → SSE to client
+- Request/response logging to SQLite
+- Registry CRUD API (`POST /api/agents` to register new IDs)
+- Gateway startup health check — poll Studio `/api/health` before accepting traffic
+
+---
+
+## Phase 3 — Multi-Agent + Tools
+
+- Multi-agent teams built in Studio UI (planner + executor patterns)
+- Session ID support — pass `session_id` to Studio for multi-turn memory
+- Tool execution via Studio tool definitions (file read, web search, code exec)
+- Expose session API: `POST /api/agents/{id}/sessions`
+
+---
+
+## Phase 4 — UI + Distribution
+
+- React frontend (Vite) consuming `/api/agents` endpoints
+- Agent management dashboard (list, test, monitor)
+- Conversation history viewer
+- Multi-user support with API key auth in gateway
+- Agent export/import (share registry entries)
 
 ---
 
 ## Validation Tests
 
 ```bash
-# Health checks
-curl http://localhost:8084/docs
+# Studio health
+curl http://localhost:8080/api/health
+
+# Gateway health
 curl http://localhost:8081/actuator/health
 
-# List agents
+# List agents (from registry)
 curl http://localhost:8081/api/agents
 
-# Invoke agent
+# Invoke — registry path
 curl -X POST http://localhost:8081/api/agents/java-dev/invoke \
   -H "Content-Type: application/json" \
   -d '{"input": "java Hello World"}'
 
+# Invoke — should Studio fallback (no registry entry)
+curl -X POST http://localhost:8081/api/agents/general-assistant/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"input": "what is REST?"}'
+
+# Unknown agent — expect 404
+curl -X POST http://localhost:8081/api/agents/does-not-exist/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"input": "test"}'
+
 # CLI
-./cli/ai general "explain REST APIs in 2 sentences"
+./cli/ai java-dev "spring boot hello world controller"
+./cli/ai general "explain dependency injection in 2 sentences"
 ```
