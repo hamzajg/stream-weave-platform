@@ -1,0 +1,8 @@
+pyautogen>=0.2.35
+ollama
+langchain
+langchain-community
+markdown
+rich
+termcolor
+pydantic
