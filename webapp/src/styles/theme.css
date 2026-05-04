@@ -1,0 +1,140 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;600;700&display=swap');
+
+:root {
+  /* Backgrounds */
+  --bg-primary: #0c1220;
+  --bg-secondary: #121b2e;
+  --bg-tertiary: #1a2640;
+  --bg-elevated: #1f2d45;
+
+  /* Borders */
+  --border-subtle: rgba(100, 180, 255, 0.12);
+  --border-default: rgba(100, 180, 255, 0.20);
+  --border-hover: rgba(0, 212, 255, 0.25);
+  --border-focus: rgba(0, 212, 255, 0.60);
+
+  /* Text */
+  --text-primary: #f0f4f8;
+  --text-secondary: #a8b8c8;
+  --text-tertiary: #7a8a9a;
+  --text-disabled: #5a6a7a;
+
+  /* Accent */
+  --accent-primary: #00d4ff;
+  --accent-dim: rgba(0, 212, 255, 0.10);
+  --accent-glow: rgba(0, 212, 255, 0.25);
+  --accent-hover: #33ddff;
+
+  /* Fonts */
+  --font-display: 'Orbitron', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* Focus States */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Button Focus */
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-dim);
+}
+
+/* Input Focus */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+/* Link Focus */
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+/* Remove default outline for mouse users */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* High Contrast Mode */
+@media (prefers-contrast: high) {
+  :root {
+    --border-subtle: rgba(100, 180, 255, 0.40);
+    --text-secondary: #c0d0e0;
+    --text-tertiary: #90a0b0;
+  }
+}
+
+/* Blueprint Grid Background */
+.blueprint-grid {
+  position: relative;
+}
+
+.blueprint-grid::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: 
+    /* Fine grid dots */
+    radial-gradient(circle, rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+    /* Medium grid dots */
+    radial-gradient(circle, rgba(100, 180, 255, 0.04) 1px, transparent 1px);
+  background-size: 20px 20px, 40px 40px;
+  background-position: 0 0, 0 0;
+}
+
+.blueprint-grid::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: 
+    /* Blueprint accent lines */
+    linear-gradient(90deg, rgba(0, 212, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(rgba(0, 212, 255, 0.02) 1px, transparent 1px);
+  background-size: 100px 100px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+}
+
+/* Background Grid Pattern */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: 
+    radial-gradient(circle, rgba(100, 180, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: 0 0;
+  opacity: 0.7;
+  mask-image: radial-gradient(ellipse at center, black 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 100%);
+}

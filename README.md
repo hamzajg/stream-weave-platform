@@ -1,245 +1,229 @@
-# StreamWeave Platform — Agent Execution Platform
+# StreamWeave Platform — Enterprise AI Agentic Workflow Platform
 
-> A self-hosted, local alternative to the OpenAI API — with single-agent invocation and multi-agent task orchestration via the actor model and reactive messaging.
+> A fully-integrated platform enabling business specialists across manufacturing, finance, insurance, healthcare, ecommerce, transportation, and agriculture to build, deploy, and manage AI agentic workflows without writing code.
+
+[![Built by Tanoshii Computing](https://img.shields.io/badge/Built%20by-Tanoshii%20Computing-00d4ff?style=flat-square)](https://tanoshii-computing.com)
+[![Community](https://img.shields.io/badge/Community-Discord-5865F2?style=flat-square)](https://tanoshii-computing.com/community)
+[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
 ---
 
 ## Overview
 
+StreamWeave is an **enterprise-grade AI Agentic workflow platform** designed for business specialists who need to migrate their operations to AI-powered automation. Built with Python FastAPI and React, it provides a visual workflow builder, enterprise onboarding, and seamless integration with Microsoft AutoGen Studio.
+
 ```
-Client (CLI / Aider / Web)
-        │
-        │  HTTP / SSE
-        ▼
-API Gateway :8081          Spring Boot — public surface
-        │
-        ├─ POST /api/agents/{id}/invoke   → single agent (direct)
-        └─ POST /api/tasks                → multi-agent task (actor mesh)
-                │
-                ▼
-        Reactive Message Bus              Project Reactor Sinks (swap to Redis in Phase 2)
-                │
-        ┌───────┴────────┐
-        │                │
-   SupervisorActor   WorkerActor(s)
-        │                │
-        └───────┬────────┘
-                ▼
-        AutoGen Studio :8080              control plane — LLM execution
-                │
-                ▼
-        Ollama :11434                     local model runtime
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  StreamWeave Platform Architecture                                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Client (Web Portal / REST API / CLI)                                       │
+│        │                                                                    │
+│        │  HTTP / SSE / WebSocket                                             │
+│        ▼                                                                    │
+│  FastAPI Gateway :8000                                                      │
+│        │                                                                    │
+│        ├─ /                    → React Landing Page (Static)               │
+│        ├─ /api/health          → Health check                               │
+│        ├─ /api/auth/*          → Authentication (JWT)                       │
+│        ├─ /api/orgs/*          → Organization management                    │
+│        ├─ /api/workflows/*     → Workflow CRUD + execution                  │
+│        ├─ /api/agents/*        → AutoGen Studio proxy                       │
+│        └─ /api/runs/*          → Execution monitoring + SSE                 │
+│                                                                              │
+│        ├─ Actor System (Asyncio)                                            │
+│        │   ├── MessageBus (async queue)                                      │
+│        │   ├── SupervisorActor (orchestration)                              │
+│        │   └── WorkerActor (agent executor)                                 │
+│        │                                                                    │
+│        └─ SQLAlchemy ORM (SQLite dev / PostgreSQL prod)                     │
+│                                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  External Integrations                                                        │
+│  ├── Microsoft AutoGen Studio :8080  (control plane)                        │
+│  └── Ollama :11434                   (local LLM runtime)                    │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Two Entry Points
+## Key Features
 
-| Endpoint | Use case | Pattern |
-|----------|----------|---------|
-| `POST /api/agents/{id}/invoke` | Single agent, simple prompt → response | Direct Studio call |
-| `POST /api/tasks` | Complex task needing multiple agents | Actor model + message bus |
-| `POST /api/tasks/stream` | Same, with live SSE step progress | Actor model + SSE |
+### 🎨 Visual Workflow Builder
+- Drag-and-drop workflow designer (ReactFlow)
+- Connect AI agents, conditions, and actions visually
+- No coding required — designed for business specialists
+- Real-time validation and preview
 
----
+### 🏢 Enterprise Onboarding
+- Multi-tenant organization support
+- Role-based access control (Owner, Editor, Viewer)
+- API key management for programmatic access
+- Audit logs and compliance features
 
-## Multi-Agent Architecture
+### 🤖 AI Agent Orchestration
+- Single-agent invocation for simple tasks
+- Multi-agent task orchestration via actor model
+- Config-first + LLM fallback planning
+- Real-time execution monitoring with SSE streaming
 
-### Actor model
-
-Every agent is an **actor** — it has a mailbox (bus subscription), processes one message at a time, and communicates only by publishing messages. No shared state, no direct method calls between agents.
-
-### Message types
-
-| Message | Flow | Purpose |
-|---------|------|---------|
-| `TaskMessage` | gateway → supervisor | Client submits a task |
-| `AgentTaskMessage` | supervisor → worker | Assign one step to one agent |
-| `AgentResultMessage` | worker → supervisor | Step output published |
-| `TaskResultMessage` | supervisor → gateway | Final aggregated result |
-| `ErrorMessage` | any → supervisor | Fault signalling |
-
-### Supervisor decision: config-first, LLM fallback
-
-```
-TaskMessage arrives (taskType + input)
-        │
-        ▼
-TaskRegistryService.findByType(taskType)
-        │
-   found? ──yes──→ load JSON plan from agent-registry/tasks/
-        │
-        no
-        │
-        ▼
-TaskPlannerService.plan(taskType, input)
-   → sends planning prompt to Supervisor LLM via Studio
-   → parses JSON plan from LLM response
-   → falls back to single general agent if parse fails
-        │
-        ▼
-ExecutionPlan resolved → dispatch steps
-```
-
-### Execution modes
-
-| Mode | Behaviour |
-|------|-----------|
-| `SEQUENTIAL` | Each step waits for the prior step's result, which is passed as `{context}` |
-| `PARALLEL` | All steps fire simultaneously, results collected with `Mono.when()` |
-
-### Aggregation strategies
-
-| Strategy | Output |
-|----------|--------|
-| `LAST` | Only the final step's output returned to client |
-| `CONCAT` | All step outputs joined in order |
-| `LLM_SUMMARY` | Supervisor LLM synthesises all step outputs into one response |
-
----
-
-## Key Technical Decisions
-
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Control plane | AutoGen Studio (`autogenstudio serve`) | Built-in UI, agent builder, REST API |
-| API gateway | Spring Boot :8081 | Stable surface, SSE, reactive |
-| Actor messaging | Project Reactor `Sinks.Many` | Already in stack; swappable to Redis |
-| Bus abstraction | `MessageBus` interface | Swap from Reactor → Redis with no actor code change |
-| Supervisor planning | Config-first + LLM fallback | Deterministic for known task types; flexible for unknown |
-| Execution | Sequential + parallel modes per step | Handles both pipeline and fan-out patterns |
-| Aggregation | LAST / CONCAT / LLM_SUMMARY | Covers simple, structured, and synthesised outputs |
-
----
-
-## Repository Structure
-**Solution name:** StreamWeave Platform  
-**Repo/project name:** `stream-weave-platform`
-
-```
-/stream-weave-platform
- ├── api-gateway/src/main/java/com/localai/gateway/
- │   ├── controller/
- │   │   ├── AgentController.java          single-agent endpoint
- │   │   └── TaskController.java           multi-agent task endpoint
- │   ├── model/
- │   │   ├── message/                      sealed message hierarchy
- │   │   │   ├── AgentMessage.java         base
- │   │   │   ├── TaskMessage.java
- │   │   │   ├── AgentTaskMessage.java
- │   │   │   ├── AgentResultMessage.java
- │   │   │   ├── TaskResultMessage.java
- │   │   │   └── ErrorMessage.java
- │   │   └── task/
- │   │       ├── TaskPlan.java
- │   │       └── TaskPlanStep.java
- │   ├── service/
- │   │   ├── bus/
- │   │   │   ├── MessageBus.java           interface (swap-safe)
- │   │   │   └── ReactorMessageBus.java    Reactor Sinks impl
- │   │   ├── actor/
- │   │   │   ├── SupervisorActor.java      orchestration brain
- │   │   │   └── WorkerActor.java          per-step executor
- │   │   ├── task/
- │   │   │   ├── TaskRegistryService.java  config-first plan lookup
- │   │   │   └── TaskPlannerService.java   LLM fallback planner
- │   │   ├── AgentRegistryService.java
- │   │   ├── AgentResolverService.java
- │   │   └── StudioClient.java
- │   └── config/
- │       ├── WebClientConfig.java
- │       ├── GlobalExceptionHandler.java
- │       └── StudioHealthCheck.java
- ├── agent-registry/
- │   ├── agents/                           agent ID → Studio team mapping
- │   │   ├── java-dev.json
- │   │   ├── python-dev.json
- │   │   ├── general.json
- │   │   ├── reviewer.json
- │   │   └── supervisor.json
- │   └── tasks/                            task type → execution plan
- │       ├── code-review.json
- │       ├── feature-build.json
- │       └── parallel-analysis.json
- ├── cli/ai                                shell wrapper
- └── docs/
-     ├── topdown.md
-     ├── blueprint.md
-     └── mvp.md
-```
+### 🔄 AutoGen Studio Integration
+- Seamless integration with Microsoft AutoGen Studio
+- Leverage AutoGen's agent capabilities
+- Local AI execution via Ollama
+- Secure, self-hosted deployment
 
 ---
 
 ## Quick Start
 
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- Docker (optional, for production)
+
+### Installation
+
 ```bash
-# 1. Start Ollama
-ollama serve && ollama pull qwen3:4b
+# 1. Clone the repository
+git clone https://github.com/hamzajg/stream-weave-platform.git
+cd stream-weave-platform
 
-# 2. Start AutoGen Studio
-autogenstudio serve --port 8080
-# Define agents and teams in the UI at http://localhost:8080
-# Required teams: Java Developer Team, Python Developer Team,
-#                 General Team, Reviewer Team, Supervisor
+# 2. Install Python dependencies
+pip3 install -r requirements.txt
 
-# 3. Start Gateway
-cd api-gateway && ./mvnw spring-boot:run
+# 3. Install and build frontend
+cd webapp
+npm install
+npm run build
+cd ..
+
+# 4. Run the backend
+uvicorn app.main:app --reload --port 8000
+```
+
+### Docker (Production)
+
+```bash
+# Start with PostgreSQL
+docker-compose up -d
+
+# View logs
+docker-compose logs -f app
+```
+
+Visit `http://localhost:8000` to see the landing page.
+
+---
+
+## Project Structure
+
+```
+stream-weave-platform/
+├── app/                          # Python FastAPI Backend
+│   ├── api/                      # API route handlers
+│   │   ├── health.py             # Health check endpoints
+│   │   ├── auth.py               # Authentication (future)
+│   │   ├── workflows.py          # Workflow management (future)
+│   │   └── agents.py             # AutoGen proxy (future)
+│   ├── models/                   # SQLAlchemy models
+│   ├── static/                   # Frontend build output
+│   ├── config.py                 # Pydantic settings
+│   ├── database.py               # SQLAlchemy setup
+│   └── main.py                   # FastAPI entry point
+├── webapp/                       # React Frontend
+│   ├── src/
+│   │   ├── components/           # React components
+│   │   ├── styles/               # Theme CSS
+│   │   └── App.tsx               # Main app
+│   ├── vite.config.ts            # Build config
+│   └── tailwind.config.js        # Theme configuration
+├── docs/                         # Documentation
+│   ├── ux-analysis-report.md
+│   ├── theme-specification-improved.md
+│   └── blueprint.md
+├── Dockerfile                    # Production image
+├── docker-compose.yml            # Full stack orchestration
+└── requirements.txt              # Python dependencies
 ```
 
 ---
 
-## API Examples
+## API Endpoints
 
-```bash
-# Single agent
-curl -X POST http://localhost:8081/api/agents/java-dev/invoke \
-  -H "Content-Type: application/json" \
-  -d '{"input": "write a REST controller for /users"}'
+### Current (Iteration 1)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Landing page |
+| `/health` | GET | Simple health check |
+| `/api/health` | GET | Detailed health status |
+| `/api/ready` | GET | Readiness check |
 
-# Multi-agent task (blocking)
-curl -X POST http://localhost:8081/api/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"taskType": "code-review", "input": "public void save(User u) { db.save(u); }"}'
-
-# Multi-agent task (SSE stream)
-curl -N -X POST http://localhost:8081/api/tasks/stream \
-  -H "Content-Type: application/json" \
-  -H "Accept: text/event-stream" \
-  -d '{"taskType": "feature-build", "input": "add JWT auth to the user service"}'
-
-# Unknown task type → LLM planner kicks in
-curl -X POST http://localhost:8081/api/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"taskType": "anything-custom", "input": "analyse this architecture diagram..."}'
-```
-
-## CLI Examples
-
-```bash
-./cli/ai agents                                        # list agents
-./cli/ai tasks                                         # list task types
-./cli/ai java-dev "hello world"                        # single agent
-./cli/ai task code-review "review this method..."     # multi-agent task
-./cli/ai task:stream feature-build "add OAuth login"  # live stream
-```
+### Planned (Future Iterations)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/auth/*` | Various | Authentication |
+| `/api/orgs/*` | Various | Organization management |
+| `/api/workflows/*` | Various | Workflow CRUD |
+| `/api/agents/*` | Various | Agent proxy |
+| `/api/runs/*` | GET | Execution monitoring |
 
 ---
 
-## Port Map
+## Design System
 
-| Service | Port |
-|---------|------|
-| AutoGen Studio | 8080 |
-| API Gateway | 8081 |
-| Ollama | 11434 |
+StreamWeave uses the **improved Tanoshii Computing design system**:
+
+### Colors
+- **Background Primary**: `#0c1220` — Deep navy black
+- **Background Secondary**: `#121b2e` — Elevated surfaces
+- **Accent (Cyan)**: `#00d4ff` — Primary action color
+- **Text Primary**: `#f0f4f8` — Headlines
+- **Text Secondary**: `#a8b8c8` — Body text
+
+### Typography
+- **Display**: `Orbitron` — Brand/logo only
+- **Body**: `Inter` — All UI text
+
+### Features
+- ✅ Glassmorphism navigation
+- ✅ Blueprint grid background
+- ✅ 44px touch targets
+- ✅ Full focus states (accessibility)
+- ✅ Reduced motion support
+
+[View full theme specification →](docs/theme-specification-improved.md)
 
 ---
 
-## Roadmap
+## Development Roadmap
 
-| Phase | Scope |
-|-------|-------|
-| Phase 1 | Single-agent invoke, actor mesh, config+LLM planning, SSE streaming |
-| Phase 2 | Redis message bus, task persistence, agent session memory |
-| Phase 3 | Peer-to-peer agent messaging, dynamic team composition, tool execution |
-| Phase 4 | React UI with live task graph visualisation, multi-user auth |
+| Iteration | Scope | Status |
+|-----------|-------|--------|
+| **1** | Landing page + Python backend + Docker | ✅ Complete |
+| **2** | Auth system (register/login), protected routes | 🔄 Planned |
+| **3** | Frontend portal (dashboard, org switcher) | 🔄 Planned |
+| **4** | MS AutoGen Studio integration (full hosted) | 🔄 Planned |
+| **5** | Visual workflow builder (ReactFlow) | 🔄 Planned |
+| **6** | Workflow runners, execution engine, SSE | 🔄 Planned |
+
+---
+
+## Community & Support
+
+- 🌐 **Website**: [tanoshii-computing.com](https://tanoshii-computing.com)
+- 💬 **Community**: [tanoshii-computing.com/community](https://tanoshii-computing.com/community)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/your-org/stream-weave-platform/issues)
+- 📧 **Email**: support@tanoshii-computing.com
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  <sub>Built with 💙 by <a href="https://tanoshii-computing.com">Tanoshii Computing</a></sub>
+</p>
