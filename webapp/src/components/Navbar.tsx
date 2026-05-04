@@ -1,5 +1,6 @@
 import { Menu, X } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -14,14 +15,14 @@ export function Navbar() {
     <nav className="fixed top-0 left-0 right-0 z-50 h-16 md:h-16 bg-background-primary/85 backdrop-blur-[16px] backdrop-saturate-[180%] border-b border-border-subtle">
       <div className="max-w-[1280px] mx-auto px-4 md:px-6 h-full flex items-center justify-between">
         {/* Brand */}
-        <a href="/" className="flex items-center gap-2 no-underline">
+        <Link to="/" className="flex items-center gap-2 no-underline">
           <span className="font-display text-lg font-semibold text-accent tracking-wider">
             STREAMWEAVE
           </span>
           <span className="hidden sm:block font-body text-xs font-medium text-text-tertiary uppercase tracking-widest">
             Platform
           </span>
-        </a>
+        </Link>
 
         {/* Desktop Navigation */}
         <div className="hidden md:flex items-center gap-2">
@@ -36,14 +37,20 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* CTA Button */}
-        <div className="flex items-center gap-4">
-          <a
-            href="#get-started"
+        {/* Auth Buttons */}
+        <div className="flex items-center gap-3">
+          <Link
+            to="/login"
+            className="hidden md:flex font-body text-sm font-medium text-text-secondary px-4 py-2.5 rounded-sm min-h-[44px] items-center transition-all duration-200 hover:text-text-primary hover:bg-background-tertiary focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+          >
+            Log In
+          </Link>
+          <Link
+            to="/register"
             className="hidden md:flex font-body text-sm font-semibold bg-accent text-background-primary px-5 py-2.5 rounded-sm min-h-[44px] items-center transition-all duration-200 hover:bg-accent-hover hover:shadow-[0_0_20px_rgba(0,212,255,0.25)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 focus-visible:shadow-[0_0_0_4px_rgba(0,212,255,0.10)]"
           >
-            Get Started
-          </a>
+            Sign Up Free
+          </Link>
 
           {/* Mobile Menu Button */}
           <button
@@ -70,13 +77,21 @@ export function Navbar() {
                 {link.name}
               </a>
             ))}
-            <a
-              href="#get-started"
+            <hr className="border-border-subtle my-2" />
+            <Link
+              to="/login"
+              onClick={() => setMobileMenuOpen(false)}
+              className="font-body text-sm font-medium text-text-secondary px-4 py-3 rounded-md min-h-[44px] flex items-center transition-all duration-200 hover:text-text-primary hover:bg-background-tertiary"
+            >
+              Log In
+            </Link>
+            <Link
+              to="/register"
               onClick={() => setMobileMenuOpen(false)}
               className="font-body text-sm font-semibold bg-accent text-background-primary px-4 py-3 rounded-md min-h-[44px] flex items-center justify-center mt-2 transition-all duration-200 hover:bg-accent-hover"
             >
-              Get Started
-            </a>
+              Sign Up Free
+            </Link>
           </div>
         </div>
       )}
