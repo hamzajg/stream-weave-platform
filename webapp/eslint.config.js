@@ -18,5 +18,13 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // react-hooks v7 introduced stricter rules that flag existing
+      // patterns in the auth/organization contexts. Keep them visible as
+      // warnings until those providers are refactored.
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/immutability': 'warn',
+      'react-refresh/only-export-components': 'warn',
+    },
   },
 ])
