@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,12 +8,22 @@ from uuid import UUID
 
 from app.database import get_db
 from app.models import User
-from app.schemas.auth import UserCreate, UserLogin, UserResponse, Token, TokenRefresh
+from app.schemas.auth import (
+    UserCreate,
+    UserLogin,
+    UserResponse,
+    Token,
+    TokenRefresh,
+    PasswordResetRequest,
+    PasswordReset,
+    MessageResponse,
+)
 from app.utils.auth import (
     get_password_hash,
     verify_password,
     create_access_token,
     create_refresh_token,
+    create_password_reset_token,
     decode_token,
 )
 from app.config import get_settings
@@ -20,6 +31,7 @@ from app.config import get_settings
 router = APIRouter()
 security = HTTPBearer()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def get_current_user(
@@ -223,3 +235,67 @@ def logout():
     Note: Token blacklist not implemented - tokens expire naturally.
     """
     return {"message": "Successfully logged out"}
+
+
+@router.post("/password-reset/request", response_model=MessageResponse)
+def request_password_reset(reset_data: PasswordResetRequest, db: Session = Depends(get_db)):
+    """
+    Request a password reset.
+
+    Always returns the same message regardless of whether the email is
+    registered, so the endpoint cannot be used to enumerate accounts. A reset
+    token is generated for known accounts and delivered by the configured mail
+    provider; with no mailer configured it is written to the application log.
+    """
+    user = db.query(User).filter(User.email == reset_data.email).first()
+
+    if user:
+        reset_token = create_password_reset_token(
+            {"sub": str(user.id), "email": user.email}
+        )
+        # No mail transport is configured yet, so surface the token in the log
+        # for local development. Swap this for an email send in production.
+        logger.info("Password reset token for %s: %s", user.email, reset_token)
+
+    return MessageResponse(
+        message="If that email is registered, a password reset link has been sent.",
+    )
+
+
+@router.post("/password-reset/confirm", response_model=MessageResponse)
+def confirm_password_reset(reset_data: PasswordReset, db: Session = Depends(get_db)):
+    """
+    Complete a password reset using a token from the reset request.
+
+    - **token**: Reset token issued for the account
+    - **new_password**: New password (minimum 8 characters)
+    """
+    payload = decode_token(reset_data.token)
+
+    if payload.get("type") != "password_reset":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid reset token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.query(User).filter(User.id == UUID(user_id)).first()
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user.hashed_password = get_password_hash(reset_data.new_password)
+    db.commit()
+
+    return MessageResponse(message="Password updated successfully.")

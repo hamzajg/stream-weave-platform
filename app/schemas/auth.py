@@ -62,3 +62,8 @@ class PasswordReset(BaseModel):
     """Schema for password reset."""
     token: str
     new_password: str = Field(..., min_length=8, max_length=100)
+
+
+class MessageResponse(BaseModel):
+    """Generic single-message response."""
+    message: str
