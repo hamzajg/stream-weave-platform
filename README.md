@@ -168,6 +168,18 @@ stream-weave-platform/
 | `/api/agents/*` | Various | Agent proxy |
 | `/api/runs/*` | GET | Execution monitoring |
 
+### Password reset
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/auth/password-reset/request` | POST | Request a reset link. Always returns the same response, so it never reveals whether an email is registered. |
+| `/api/auth/password-reset/confirm` | POST | Set a new password using the token from the reset request. |
+
+The reset token is a short-lived JWT (`password_reset` type, 30 minutes by
+default via `PASSWORD_RESET_EXPIRE_MINUTES`). No mail transport is configured
+yet, so the token is written to the application log for local development;
+replace that with an email send before deploying.
+
 ---
 
 ## Design System

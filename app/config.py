@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "your-secret-key-change-in-production"
     access_token_expire_minutes: int = 30
+    password_reset_expire_minutes: int = 30
     
     # Static files
     static_dir: str = "static"
