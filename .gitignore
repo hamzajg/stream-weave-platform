@@ -165,3 +165,7 @@ Thumbs.db
 bin/
 include/
 pyvenv.cfg
+
+# Local runtime data
+*.db
+streamweave.db

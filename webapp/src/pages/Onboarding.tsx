@@ -115,41 +115,37 @@ export function Onboarding() {
 
     const { access_token } = JSON.parse(tokens);
 
-    try {
-      let body = {};
-      if (stepId === 'personal') {
-        body = {
-          full_name: formData.personal.fullName,
-          role_title: formData.personal.roleTitle,
-        };
-      } else if (stepId === 'organization') {
-        body = {
-          name: formData.organization.name,
-          industry: formData.organization.industry,
-          size: formData.organization.size,
-          description: formData.organization.description,
-        };
-      } else if (stepId === 'invite') {
-        body = {
-          invites: formData.invites.emails.filter(e => e).map(email => ({ email, role: 'viewer' })),
-        };
-      }
+    let body = {};
+    if (stepId === 'personal') {
+      body = {
+        full_name: formData.personal.fullName,
+        role_title: formData.personal.roleTitle,
+      };
+    } else if (stepId === 'organization') {
+      body = {
+        name: formData.organization.name,
+        industry: formData.organization.industry,
+        size: formData.organization.size,
+        description: formData.organization.description,
+      };
+    } else if (stepId === 'invite') {
+      body = {
+        invites: formData.invites.emails.filter(e => e).map(email => ({ email, role: 'viewer' })),
+      };
+    }
 
-      const response = await fetch(`${API_URL}/api/onboarding/${stepId}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
+    const response = await fetch(`${API_URL}/api/onboarding/${stepId}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || `Failed to save ${stepId}`);
-      }
-    } catch (err) {
-      throw err;
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `Failed to save ${stepId}`);
     }
   };
 
