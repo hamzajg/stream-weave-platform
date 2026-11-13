@@ -310,7 +310,7 @@ def skip_onboarding(
     new_org = Organization(
         name=org_name,
         slug=slug,
-        industry=OrganizationSize.OTHER,
+        industry=OrganizationIndustry.OTHER,
         size=OrganizationSize.SIZE_1_10,
         description="Personal workspace",
         created_by=current_user.id,

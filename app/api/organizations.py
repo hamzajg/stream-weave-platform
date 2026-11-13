@@ -81,8 +81,8 @@ def create_organization(
     new_org = Organization(
         name=org_data.name,
         slug=slug,
-        industry=org_data.industry,
-        size=org_data.size,
+        industry=OrganizationIndustry(org_data.industry.value),
+        size=OrganizationSize(org_data.size.value),
         description=org_data.description,
         created_by=current_user.id,
     )
@@ -325,7 +325,7 @@ def invite_member(
     invitation = Invitation(
         email=invitation_data.email,
         organization_id=org_id,
-        role=invitation_data.role,
+        role=OrganizationRole(invitation_data.role.value),
         token=generate_invitation_token(),
         invited_by=current_user.id,
     )
