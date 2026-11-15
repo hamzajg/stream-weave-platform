@@ -3,6 +3,7 @@
 from app.models.user import User
 from app.models.organization import Organization, OrganizationMember, OrganizationIndustry, OrganizationSize, OrganizationRole
 from app.models.invitation import Invitation
+from app.models.agent import AgentConversation, AgentMessage
 
 __all__ = [
     "User",
@@ -12,4 +13,6 @@ __all__ = [
     "OrganizationSize",
     "OrganizationRole",
     "Invitation",
+    "AgentConversation",
+    "AgentMessage",
 ]
