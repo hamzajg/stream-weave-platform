@@ -1,0 +1,67 @@
+name: Compose smoke test
+
+# Boots app + Postgres from docker-compose and checks the app serves /health
+# with the database reachable. The Docker job proves the image builds; this
+# proves the stack actually comes up together.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: App answers /health with Postgres up
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build and start the stack
+        run: docker compose up --build --detach
+
+      - name: Wait for GET /health
+        run: |
+          set -uo pipefail
+          for attempt in $(seq 1 60); do
+            code=$(curl --silent --output /tmp/health.json --write-out '%{http_code}' \
+              http://localhost:8000/health || true)
+            echo "attempt ${attempt}: ${code}"
+            if [ "${code}" = "200" ]; then exit 0; fi
+            sleep 5
+          done
+          echo "::error::the app never answered /health"
+          exit 1
+
+      - name: Health payload reports a healthy app
+        run: |
+          set -euo pipefail
+          curl --silent --show-error http://localhost:8000/health | tee /tmp/health.json
+          echo
+          grep --quiet --ignore-case 'ok\|healthy\|up' /tmp/health.json
+
+      - name: Both containers are running
+        # A 200 from the app is the real assertion; this catches a container
+        # that reported the status then exited.
+        run: |
+          set -euo pipefail
+          running=$(docker compose ps --status running --services)
+          echo "${running}"
+          echo "${running}" | grep --quiet '^app$'
+          echo "${running}" | grep --quiet '^db$'
+
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color --tail 100
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes --remove-orphans
