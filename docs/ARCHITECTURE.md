@@ -47,17 +47,23 @@ visible — schema is created from models; treat DB changes carefully.
 
 ## Agent runtime (`app/agents/` + `/api/agents`)
 
-Org-scoped chat agent — first slice (read-only tools, no workflow
-builder yet):
+Org-scoped chat agent — read tools + human-confirmed write
+tools (no workflow builder yet):
 
 - `POST /api/agents/conversations/{id}/messages` persists the user
   message, then `loop.run_turn` alternates LLM ↔ tool calls until the
   model answers without tool calls or `agent_max_iterations` (6) is hit.
 - Other routes: `GET /api/agents/tools`, `POST/GET
   /api/agents/conversations`, `GET /api/agents/conversations/{id}`.
-- Tools (`tools.py`) are read-only and re-check membership/role per
-  call: `list_org_members`, `get_organization_info`,
-  `list_pending_invitations` (admin+), `list_my_organizations`.
+- Tools (`tools.py`) re-check membership/role per call:
+  `list_org_members`, `get_organization_info`,
+  `list_pending_invitations` (admin+), `list_my_organizations`, and the
+  write tool `invite_org_member` (admin+, `requires_confirmation`).
+- **Write tools never execute in-loop** (ADR 0003): they persist an
+  `AgentPendingAction` (24h TTL) instead. `GET /api/agents/actions`
+  lists the caller's actions; `POST .../actions/{id}/approve` executes
+  under the approver's identity (tool role checks still apply);
+  `POST .../reject` cancels; expired → `410`, non-pending → `409`.
 - LLM (`llm.py`) is any OpenAI-compatible `chat/completions` endpoint —
   default derived from `ollama_url` + `/v1`. Env: `AGENT_LLM_BASE_URL`,
   `AGENT_LLM_API_KEY`, `AGENT_LLM_MODEL` (default `llama3.1`),

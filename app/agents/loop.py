@@ -91,7 +91,8 @@ async def run_turn(
             except ValueError:
                 arguments = {}
             result = tools.execute_tool(
-                db, user, conversation.organization_id, name, arguments
+                db, user, conversation.organization_id, name, arguments,
+                conversation_id=conversation.id,
             )
             tool_msg = _append(
                 db, conversation,

@@ -184,3 +184,129 @@ def test_send_message_requires_auth(client):
         json={"content": "hi"},
     )
     assert response.status_code == 403  # HTTPBearer without credentials
+
+
+def _pending_invite_call(email="newbie@example.com"):
+    return _tool_call_response(
+        "invite_org_member",
+        '{"email": "%s", "role": "editor"}' % email,
+    )
+
+
+def test_write_tool_proposes_pending_action(client, monkeypatch):
+    token = _login(client, _register(client))
+    org = _create_org(client, token)
+    conv = _create_conversation(client, token, org["id"])
+
+    fake = FakeLLM([
+        _pending_invite_call(),
+        {"role": "assistant", "content": "I've prepared the invite for approval."},
+    ])
+    monkeypatch.setattr(llm, "chat_completion", fake)
+
+    response = client.post(
+        f"/api/agents/conversations/{conv['id']}/messages",
+        json={"content": "Invite newbie@example.com"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+
+    tool_msg = response.json()["messages"][1]
+    assert tool_msg["tool_name"] == "invite_org_member"
+    assert "pending_confirmation" in tool_msg["content"]
+
+    # The action is listed and still pending — nothing was sent yet.
+    actions = client.get("/api/agents/actions", headers=_auth(token))
+    assert actions.status_code == 200
+    pending = [a for a in actions.json() if a["status"] == "pending"]
+    assert len(pending) == 1
+    assert pending[0]["tool_name"] == "invite_org_member"
+
+
+def test_approve_executes_write_tool(client, monkeypatch):
+    token = _login(client, _register(client))
+    org = _create_org(client, token)
+    conv = _create_conversation(client, token, org["id"])
+
+    fake = FakeLLM([
+        _pending_invite_call("approve-me@example.com"),
+        {"role": "assistant", "content": "Pending your approval."},
+    ])
+    monkeypatch.setattr(llm, "chat_completion", fake)
+    client.post(
+        f"/api/agents/conversations/{conv['id']}/messages",
+        json={"content": "Invite approve-me@example.com"},
+        headers=_auth(token),
+    )
+
+    action_id = client.get("/api/agents/actions", headers=_auth(token)).json()[0]["id"]
+    response = client.post(f"/api/agents/actions/{action_id}/approve", headers=_auth(token))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "executed"
+    assert body["result"]["email"] == "approve-me@example.com"
+
+    # Second approval is rejected.
+    again = client.post(f"/api/agents/actions/{action_id}/approve", headers=_auth(token))
+    assert again.status_code == 409
+
+    # The invitation now shows up in the agent's own read tool.
+    fake2 = FakeLLM([
+        _tool_call_response("list_pending_invitations", "{}"),
+        {"role": "assistant", "content": "One pending invite."},
+    ])
+    monkeypatch.setattr(llm, "chat_completion", fake2)
+    client.post(
+        f"/api/agents/conversations/{conv['id']}/messages",
+        json={"content": "any invites?"},
+        headers=_auth(token),
+    )
+
+
+def test_reject_never_executes(client, monkeypatch):
+    token = _login(client, _register(client))
+    org = _create_org(client, token)
+    conv = _create_conversation(client, token, org["id"])
+
+    fake = FakeLLM([
+        _pending_invite_call("reject-me@example.com"),
+        {"role": "assistant", "content": "Pending."},
+    ])
+    monkeypatch.setattr(llm, "chat_completion", fake)
+    client.post(
+        f"/api/agents/conversations/{conv['id']}/messages",
+        json={"content": "Invite reject-me@example.com"},
+        headers=_auth(token),
+    )
+    action_id = client.get("/api/agents/actions", headers=_auth(token)).json()[0]["id"]
+
+    response = client.post(f"/api/agents/actions/{action_id}/reject", headers=_auth(token))
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+
+    approve = client.post(f"/api/agents/actions/{action_id}/approve", headers=_auth(token))
+    assert approve.status_code == 409
+
+
+def test_actions_are_owner_private(client, monkeypatch):
+    owner_token = _login(client, _register(client))
+    org = _create_org(client, owner_token)
+    conv = _create_conversation(client, owner_token, org["id"])
+
+    fake = FakeLLM([
+        _pending_invite_call("private@example.com"),
+        {"role": "assistant", "content": "Pending."},
+    ])
+    monkeypatch.setattr(llm, "chat_completion", fake)
+    client.post(
+        f"/api/agents/conversations/{conv['id']}/messages",
+        json={"content": "invite"},
+        headers=_auth(owner_token),
+    )
+    action_id = client.get("/api/agents/actions", headers=_auth(owner_token)).json()[0]["id"]
+
+    outsider_token = _login(client, _register(client))
+    listed = client.get("/api/agents/actions", headers=_auth(outsider_token))
+    assert listed.json() == []
+    approve = client.post(f"/api/agents/actions/{action_id}/approve", headers=_auth(outsider_token))
+    assert approve.status_code == 404
