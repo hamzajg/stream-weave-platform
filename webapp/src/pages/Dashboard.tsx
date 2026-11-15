@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, Workflow, Users, LogOut,
+  LayoutDashboard, Workflow, Users, LogOut, Bot,
   Plus, Zap, TrendingUp, Clock, Activity,
   ChevronDown, Building2, Bell
 } from 'lucide-react';
@@ -106,6 +106,13 @@ export function Dashboard() {
               <button className="px-3 py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-background-tertiary transition-colors">
                 <Workflow className="w-4 h-4 inline mr-2" />
                 Workflows
+              </button>
+              <button
+                onClick={() => navigate('/agent')}
+                className="px-3 py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-background-tertiary transition-colors"
+              >
+                <Bot className="w-4 h-4 inline mr-2" />
+                Agent
               </button>
               <button className="px-3 py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-background-tertiary transition-colors">
                 <Users className="w-4 h-4 inline mr-2" />
