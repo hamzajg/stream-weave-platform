@@ -42,6 +42,10 @@ app/                        FastAPI backend
     organizations.py        /api/orgs: multi-tenant org management
     onboarding.py           /api/onboarding: org/user onboarding flow
     dashboard.py            /api/dashboard: dashboard data
+    agents.py               /api/agents: conversations + agent chat
+  agents/                   agent runtime: tools.py (read-only org-scoped
+                            tool registry), llm.py (OpenAI-compatible
+                            client via httpx), loop.py (LLM ↔ tools)
   models/                   user.py, organization.py, invitation.py
   schemas/                  pydantic request/response models
   static/                   built frontend (served at /)
@@ -62,6 +66,11 @@ docker-compose.yml          backend + webapp containers
 | organizations | `/api/orgs` | tenant CRUD |
 | onboarding | `/api/onboarding` | onboarding flow |
 | dashboard | `/api/dashboard` | dashboard aggregates |
+| agents | `/api/agents` | `GET /tools`; `POST/GET /conversations`; `GET /conversations/{id}`; `POST /conversations/{id}/messages` (runs the agent loop) |
+
+Agent LLM env vars: `AGENT_LLM_BASE_URL` (default `{OLLAMA_URL}/v1`),
+`AGENT_LLM_API_KEY`, `AGENT_LLM_MODEL` (default `llama3.1`),
+`AGENT_MAX_ITERATIONS` (6), `AGENT_MAX_HISTORY` (20).
 
 Frontend talks to `/api/*` on the same origin (FastAPI serves static + API).
 
@@ -86,8 +95,9 @@ Frontend talks to `/api/*` on the same origin (FastAPI serves static + API).
   or static dir refreshed to serve new UI.
 - `.venv/` exists in working tree locally — use `requirements*.txt`, don't
   rely on it.
-- AutoGen Studio integration is planned/partial — check `docs/` before
-  assuming agent runtime exists.
+- AutoGen Studio integration is the long-term engine candidate — the
+  in-house `app/agents/` loop is the first slice (ADR 0002); don't
+  assume AutoGen runtime exists.
 - `pytest` needs `requirements-dev.txt` installed; plain `requirements.txt`
   lacks test deps.
 

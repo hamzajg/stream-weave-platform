@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 
 from app.config import get_settings
-from app.api import health, auth, organizations, onboarding, dashboard
+from app.api import health, auth, organizations, onboarding, dashboard, agents
 from app.database import engine, Base
 
 settings = get_settings()
@@ -37,6 +37,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(organizations.router, prefix="/api/orgs", tags=["Organizations"])
 app.include_router(onboarding.router, prefix="/api/onboarding", tags=["Onboarding"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
+app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
 
 # Static files - only mount if directory exists
 static_path = os.path.join(os.path.dirname(__file__), settings.static_dir)
