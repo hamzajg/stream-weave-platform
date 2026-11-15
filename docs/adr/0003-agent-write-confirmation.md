@@ -24,8 +24,19 @@ Two-phase propose → approve, enforced structurally:
   own membership/role checks still apply, so approval grants nothing
   the approver lacks. Result or error is stored on the action.
 - `POST .../reject` marks `rejected`; expired pending actions →
-  `410 Gone` and flip to `expired`. Actions are owner-private like
-  conversations; non-pending approval → `409`.
+  `410 Gone` and flip to `expired`. Non-pending approval → `409`.
+- **Delegated confirmation:** actions are visible to their proposer and
+  to OWNER/ADMIN members of the action's org — an admin can approve or
+  reject a proposal made by another member (execution still runs under
+  the approver's identity, so the tool's role checks gate it). Others
+  get `404`, same as a missing action. `resolved_by` records who
+  resolved it.
+- **Proposal-time authorization:** confirmed tools may declare an
+  `authorize` pre-flight check run before the pending row is created
+  (`invite_org_member` requires admin/owner + valid args). Rejected
+  proposals return an error to the model — no action is persisted.
+  State checks that can change by approval time (duplicate member,
+  pending invitation) stay in the tool function and re-run on approve.
 - First write tool: `invite_org_member` (admin/owner only, grants only
   `editor`/`viewer` — agents can't escalate privileges). The invitation
   token is never returned to the model.
@@ -39,7 +50,7 @@ Two-phase propose → approve, enforced structurally:
 - Approval is synchronous REST — no email/push notification yet; a UI
   surface for pending actions is the natural next slice.
 - `AgentPendingAction` is audit-grade: who proposed, what args, who
-  resolved, result/error — replayable.
-- Deferred: multi-step saga writes, delegation (approver ≠ proposer is
-  currently impossible since actions are owner-private), expiry sweep
-  job (expiry is lazy — checked on approve/list).
+  resolved (`resolved_by`), result/error — replayable.
+- Deferred: multi-step saga writes, expiry sweep job (expiry is lazy —
+  checked on approve), notification when a delegated action awaits an
+  admin, and finer-grained delegation (e.g. per-tool approver roles).

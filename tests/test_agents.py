@@ -310,3 +310,98 @@ def test_actions_are_owner_private(client, monkeypatch):
     assert listed.json() == []
     approve = client.post(f"/api/agents/actions/{action_id}/approve", headers=_auth(outsider_token))
     assert approve.status_code == 404
+
+
+def _add_member(client, owner_token, org_id, email, role="viewer"):
+    """Register + invite + accept a member; returns their auth token."""
+    _register(client, email=email)
+    invite = client.post(
+        f"/api/orgs/{org_id}/invite",
+        json={"email": email, "role": role},
+        headers=_auth(owner_token),
+    )
+    assert invite.status_code == 200, invite.text
+    member_token = _login(client, email)
+    accept = client.post(
+        "/api/orgs/invitations/accept",
+        json={"token": invite.json()["token"]},
+        headers=_auth(member_token),
+    )
+    assert accept.status_code == 200, accept.text
+    return member_token
+
+
+def _propose_invite(client, monkeypatch, token, org_id, email):
+    """Drive one agent turn that calls invite_org_member; returns action id or None."""
+    conv = _create_conversation(client, token, org_id)
+    fake = FakeLLM([
+        _pending_invite_call(email),
+        {"role": "assistant", "content": "Pending your approval."},
+    ])
+    monkeypatch.setattr(llm, "chat_completion", fake)
+    response = client.post(
+        f"/api/agents/conversations/{conv['id']}/messages",
+        json={"content": f"Invite {email}"},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    actions = client.get("/api/agents/actions", headers=_auth(token)).json()
+    return actions[0]["id"] if actions else None
+
+
+def test_non_admin_cannot_propose_write(client, monkeypatch):
+    owner_token = _login(client, _register(client))
+    org = _create_org(client, owner_token)
+    viewer_email = f"viewer-{uuid.uuid4().hex}@example.com"
+    viewer_token = _add_member(client, owner_token, org["id"], viewer_email, "viewer")
+
+    action_id = _propose_invite(
+        client, monkeypatch, viewer_token, org["id"], "nope@example.com"
+    )
+    # Proposal rejected at authorize time — no pending action persisted.
+    assert action_id is None
+    assert client.get("/api/agents/actions", headers=_auth(viewer_token)).json() == []
+
+
+def test_org_admin_can_approve_delegated_action(client, monkeypatch):
+    owner_token = _login(client, _register(client))
+    org = _create_org(client, owner_token)
+    admin2_email = f"admin2-{uuid.uuid4().hex}@example.com"
+    admin2_token = _add_member(client, owner_token, org["id"], admin2_email, "admin")
+
+    # Owner proposes; the action is visible to the other org admin.
+    action_id = _propose_invite(
+        client, monkeypatch, owner_token, org["id"], "delegated@example.com"
+    )
+    assert action_id is not None
+
+    listed = client.get("/api/agents/actions", headers=_auth(admin2_token)).json()
+    assert any(a["id"] == action_id for a in listed)
+
+    response = client.post(
+        f"/api/agents/actions/{action_id}/approve", headers=_auth(admin2_token)
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "executed"
+    assert body["resolved_by"] is not None
+
+
+def test_non_admin_member_cannot_see_or_resolve_org_actions(client, monkeypatch):
+    owner_token = _login(client, _register(client))
+    org = _create_org(client, owner_token)
+    viewer_email = f"viewer2-{uuid.uuid4().hex}@example.com"
+    viewer_token = _add_member(client, owner_token, org["id"], viewer_email, "viewer")
+
+    action_id = _propose_invite(
+        client, monkeypatch, owner_token, org["id"], "hidden@example.com"
+    )
+    assert action_id is not None
+
+    # Viewer is an org member but not admin: no visibility into others' actions.
+    listed = client.get("/api/agents/actions", headers=_auth(viewer_token)).json()
+    assert all(a["id"] != action_id for a in listed)
+    approve = client.post(
+        f"/api/agents/actions/{action_id}/approve", headers=_auth(viewer_token)
+    )
+    assert approve.status_code == 404

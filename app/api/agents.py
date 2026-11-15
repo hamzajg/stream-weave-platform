@@ -6,12 +6,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.database import get_db
 from app.models import (
-    User, Organization, OrganizationMember, AgentConversation, AgentMessage,
-    AgentPendingAction,
+    User, Organization, OrganizationMember, OrganizationRole,
+    AgentConversation, AgentMessage, AgentPendingAction,
 )
 from app.schemas.agents import (
     ConversationCreate, ConversationResponse, ConversationDetailResponse,
@@ -230,24 +230,56 @@ def _action_to_response(a: AgentPendingAction) -> PendingActionResponse:
         expires_at=a.expires_at,
         created_at=a.created_at,
         resolved_at=a.resolved_at,
+        resolved_by=a.resolved_by,
     )
+
+
+def _admin_org_ids(db: Session, user: User) -> List[UUID]:
+    """Orgs where the user holds OWNER or ADMIN — action delegation scope."""
+    return [
+        m.organization_id
+        for m in db.query(OrganizationMember)
+        .filter(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.role.in_(
+                [OrganizationRole.OWNER, OrganizationRole.ADMIN]
+            ),
+        )
+        .all()
+    ]
 
 
 def _get_action(db: Session, action_id: UUID, user: User) -> AgentPendingAction:
-    action = (
-        db.query(AgentPendingAction)
-        .filter(
-            AgentPendingAction.id == action_id,
-            AgentPendingAction.user_id == user.id,
-        )
-        .first()
-    )
+    """Fetch an action the caller may see: its proposer, or an org admin.
+
+    Org OWNER/ADMIN members can see and resolve actions proposed by other
+    members of the same org (delegated confirmation); everyone else gets
+    the same 404 as a missing action so existence isn't leaked.
+    """
+    action = db.query(AgentPendingAction).filter(
+        AgentPendingAction.id == action_id
+    ).first()
     if not action:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Action not found",
         )
-    return action
+    if action.user_id == user.id:
+        return action
+    member = (
+        db.query(OrganizationMember)
+        .filter(
+            OrganizationMember.organization_id == action.organization_id,
+            OrganizationMember.user_id == user.id,
+        )
+        .first()
+    )
+    if member and member.role in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+        return action
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Action not found",
+    )
 
 
 @router.get("/actions", response_model=List[PendingActionResponse])
@@ -257,9 +289,14 @@ def list_actions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """List the current user's pending/proposed agent actions."""
+    """List actions visible to the caller: their own, plus — for org
+    OWNER/ADMIN members — every action in those orgs (delegated
+    confirmation and audit)."""
     query = db.query(AgentPendingAction).filter(
-        AgentPendingAction.user_id == current_user.id
+        or_(
+            AgentPendingAction.user_id == current_user.id,
+            AgentPendingAction.organization_id.in_(_admin_org_ids(db, current_user)),
+        )
     )
     if conversation_id:
         query = query.filter(AgentPendingAction.conversation_id == conversation_id)
@@ -300,6 +337,7 @@ def approve_action(
         json.loads(action.arguments or "{}"),
     )
     action.resolved_at = datetime.utcnow()
+    action.resolved_by = current_user.id
     if result.get("ok"):
         action.status = "executed"
         action.result = json.dumps(result.get("result"))
@@ -328,6 +366,7 @@ def reject_action(
         )
     action.status = "rejected"
     action.resolved_at = datetime.utcnow()
+    action.resolved_by = current_user.id
     db.commit()
     db.refresh(action)
     return _action_to_response(action)

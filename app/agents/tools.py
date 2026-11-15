@@ -12,7 +12,7 @@ or role — the agent never bypasses the authorization the API enforces.
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -31,6 +31,11 @@ class Tool:
     parameters: Dict[str, Any]  # JSON Schema object
     func: Callable[[Session, User, UUID, Dict[str, Any]], Dict[str, Any]]
     requires_confirmation: bool = False
+    # Optional pre-flight check run when a confirmation tool is proposed:
+    # raises PermissionError/ValueError to reject the proposal before an
+    # AgentPendingAction row is created. State checks that can change by
+    # approval time stay in `func`.
+    authorize: Optional[Callable[[Session, User, UUID, Dict[str, Any]], None]] = None
 
     def spec(self) -> Dict[str, Any]:
         """OpenAI-compatible tool specification."""
@@ -160,12 +165,8 @@ def list_my_organizations(db: Session, user: User, org_id: UUID, args: Dict[str,
     }
 
 
-def invite_org_member(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
-    """Create an organization invitation. Requires admin/owner and human
-    confirmation — runs only from the approve endpoint, never in-loop."""
-    _require_admin(db, user, org_id)
-    _org_or_404(db, org_id)
-
+def _validate_invite_args(args: Dict[str, Any]) -> Tuple[str, OrganizationRole]:
+    """Shared argument validation for invite_org_member (proposal + execute)."""
     email = (args.get("email") or "").strip().lower()
     role_raw = (args.get("role") or "viewer").strip().lower()
     if not email or "@" not in email:
@@ -177,6 +178,22 @@ def invite_org_member(db: Session, user: User, org_id: UUID, args: Dict[str, Any
     # Agents may only grant non-privileged roles.
     if role not in (OrganizationRole.EDITOR, OrganizationRole.VIEWER):
         raise ValueError(f"Agents may not grant role: {role_raw}")
+    return email, role
+
+
+def authorize_invite_member(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> None:
+    """Proposal-time check: only admins may even propose an invite."""
+    _require_admin(db, user, org_id)
+    _validate_invite_args(args)
+
+
+def invite_org_member(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Create an organization invitation. Requires admin/owner and human
+    confirmation — runs only from the approve endpoint, never in-loop."""
+    _require_admin(db, user, org_id)
+    _org_or_404(db, org_id)
+
+    email, role = _validate_invite_args(args)
 
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
@@ -291,6 +308,7 @@ register(Tool(
     },
     func=invite_org_member,
     requires_confirmation=True,
+    authorize=authorize_invite_member,
 ))
 
 
@@ -314,6 +332,11 @@ def execute_tool(
     if tool.requires_confirmation:
         if conversation_id is None:
             return {"ok": False, "error": "Confirmation actions require a conversation context"}
+        if tool.authorize is not None:
+            try:
+                tool.authorize(db, user, org_id, arguments or {})
+            except (PermissionError, LookupError, ValueError) as exc:
+                return {"ok": False, "error": str(exc)}
         action = AgentPendingAction(
             conversation_id=conversation_id,
             organization_id=org_id,

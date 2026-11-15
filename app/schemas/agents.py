@@ -65,5 +65,6 @@ class PendingActionResponse(BaseModel):
     expires_at: datetime
     created_at: datetime
     resolved_at: Optional[datetime] = None
+    resolved_by: Optional[UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
