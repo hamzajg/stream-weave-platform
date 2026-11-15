@@ -60,10 +60,13 @@ tools (no workflow builder yet):
   `list_pending_invitations` (admin+), `list_my_organizations`, and the
   write tool `invite_org_member` (admin+, `requires_confirmation`).
 - **Write tools never execute in-loop** (ADR 0003): they persist an
-  `AgentPendingAction` (24h TTL) instead. `GET /api/agents/actions`
-  lists the caller's actions; `POST .../actions/{id}/approve` executes
-  under the approver's identity (tool role checks still apply);
-  `POST .../reject` cancels; expired → `410`, non-pending → `409`.
+  `AgentPendingAction` (24h TTL) instead — after an optional
+  proposal-time `authorize` check. `GET /api/agents/actions` lists the
+  caller's actions plus, for org OWNER/ADMIN members, all actions in
+  their orgs (delegated confirmation). `POST .../actions/{id}/approve`
+  executes under the approver's identity (tool role checks still
+  apply); `POST .../reject` cancels; `resolved_by` records the resolver;
+  expired → `410`, non-pending → `409`.
 - LLM (`llm.py`) is any OpenAI-compatible `chat/completions` endpoint —
   default derived from `ollama_url` + `/v1`. Env: `AGENT_LLM_BASE_URL`,
   `AGENT_LLM_API_KEY`, `AGENT_LLM_MODEL` (default `llama3.1`),

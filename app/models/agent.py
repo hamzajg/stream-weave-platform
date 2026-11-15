@@ -78,6 +78,7 @@ class AgentPendingAction(Base):
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+    resolved_by = Column(UUID, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     conversation = relationship("AgentConversation")
 
