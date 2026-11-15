@@ -1,5 +1,7 @@
 """Agent conversations API: org-scoped chat with the agent runtime."""
-from typing import List
+import json
+from datetime import datetime
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,10 +11,12 @@ from sqlalchemy import func
 from app.database import get_db
 from app.models import (
     User, Organization, OrganizationMember, AgentConversation, AgentMessage,
+    AgentPendingAction,
 )
 from app.schemas.agents import (
     ConversationCreate, ConversationResponse, ConversationDetailResponse,
     MessageCreate, MessageSendResponse, MessageResponse, ToolInfo,
+    PendingActionResponse,
 )
 from app.api.auth import get_current_active_user
 from app.agents import loop, tools
@@ -207,3 +211,123 @@ async def send_message(
             for m in new_messages
         ],
     )
+
+
+# --- Pending write actions (human confirmation) ---------------------------
+
+
+def _action_to_response(a: AgentPendingAction) -> PendingActionResponse:
+    return PendingActionResponse(
+        id=a.id,
+        conversation_id=a.conversation_id,
+        organization_id=a.organization_id,
+        user_id=a.user_id,
+        tool_name=a.tool_name,
+        arguments=json.loads(a.arguments or "{}"),
+        status=a.status,
+        result=json.loads(a.result) if a.result else None,
+        error=a.error,
+        expires_at=a.expires_at,
+        created_at=a.created_at,
+        resolved_at=a.resolved_at,
+    )
+
+
+def _get_action(db: Session, action_id: UUID, user: User) -> AgentPendingAction:
+    action = (
+        db.query(AgentPendingAction)
+        .filter(
+            AgentPendingAction.id == action_id,
+            AgentPendingAction.user_id == user.id,
+        )
+        .first()
+    )
+    if not action:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Action not found",
+        )
+    return action
+
+
+@router.get("/actions", response_model=List[PendingActionResponse])
+def list_actions(
+    conversation_id: Optional[UUID] = None,
+    action_status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List the current user's pending/proposed agent actions."""
+    query = db.query(AgentPendingAction).filter(
+        AgentPendingAction.user_id == current_user.id
+    )
+    if conversation_id:
+        query = query.filter(AgentPendingAction.conversation_id == conversation_id)
+    if action_status:
+        query = query.filter(AgentPendingAction.status == action_status)
+    actions = query.order_by(AgentPendingAction.created_at.desc()).all()
+    return [_action_to_response(a) for a in actions]
+
+
+@router.post("/actions/{action_id}/approve", response_model=PendingActionResponse)
+def approve_action(
+    action_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Approve a pending write action — executes it under the caller's identity."""
+    action = _get_action(db, action_id, current_user)
+    _get_membership(db, current_user, action.organization_id)
+
+    if action.status == "pending" and action.is_expired():
+        action.status = "expired"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Action expired before approval",
+        )
+    if action.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Action is already {action.status}",
+        )
+
+    result = tools.run_approved_action(
+        db,
+        current_user,
+        action.organization_id,
+        action.tool_name,
+        json.loads(action.arguments or "{}"),
+    )
+    action.resolved_at = datetime.utcnow()
+    if result.get("ok"):
+        action.status = "executed"
+        action.result = json.dumps(result.get("result"))
+    else:
+        action.status = "failed"
+        action.error = result.get("error")
+    db.commit()
+    db.refresh(action)
+    return _action_to_response(action)
+
+
+@router.post("/actions/{action_id}/reject", response_model=PendingActionResponse)
+def reject_action(
+    action_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Reject a pending write action — it is never executed."""
+    action = _get_action(db, action_id, current_user)
+    _get_membership(db, current_user, action.organization_id)
+
+    if action.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Action is already {action.status}",
+        )
+    action.status = "rejected"
+    action.resolved_at = datetime.utcnow()
+    db.commit()
+    db.refresh(action)
+    return _action_to_response(action)

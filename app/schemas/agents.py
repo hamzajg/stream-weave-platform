@@ -50,3 +50,20 @@ class MessageSendResponse(BaseModel):
 class ToolInfo(BaseModel):
     name: str
     description: str
+
+
+class PendingActionResponse(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    organization_id: UUID
+    user_id: UUID
+    tool_name: str
+    arguments: dict
+    status: str
+    result: Optional[dict] = None
+    error: Optional[str] = None
+    expires_at: datetime
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)

@@ -3,7 +3,7 @@
 from app.models.user import User
 from app.models.organization import Organization, OrganizationMember, OrganizationIndustry, OrganizationSize, OrganizationRole
 from app.models.invitation import Invitation
-from app.models.agent import AgentConversation, AgentMessage
+from app.models.agent import AgentConversation, AgentMessage, AgentPendingAction
 
 __all__ = [
     "User",
@@ -15,4 +15,5 @@ __all__ = [
     "Invitation",
     "AgentConversation",
     "AgentMessage",
+    "AgentPendingAction",
 ]

@@ -43,7 +43,8 @@ app/                        FastAPI backend
     onboarding.py           /api/onboarding: org/user onboarding flow
     dashboard.py            /api/dashboard: dashboard data
     agents.py               /api/agents: conversations + agent chat
-  agents/                   agent runtime: tools.py (read-only org-scoped
+  agents/                   agent runtime: tools.py (org-scoped tools;
+                             write tools need human confirmation, ADR 0003)
                             tool registry), llm.py (OpenAI-compatible
                             client via httpx), loop.py (LLM ↔ tools)
   models/                   user.py, organization.py, invitation.py
@@ -66,7 +67,7 @@ docker-compose.yml          backend + webapp containers
 | organizations | `/api/orgs` | tenant CRUD |
 | onboarding | `/api/onboarding` | onboarding flow |
 | dashboard | `/api/dashboard` | dashboard aggregates |
-| agents | `/api/agents` | `GET /tools`; `POST/GET /conversations`; `GET /conversations/{id}`; `POST /conversations/{id}/messages` (runs the agent loop) |
+| agents | `/api/agents` | `GET /tools`; `POST/GET /conversations`; `GET /conversations/{id}`; `POST /conversations/{id}/messages` (runs the agent loop); `GET /actions`; `POST /actions/{id}/approve|reject` (human-confirmed writes) |
 
 Agent LLM env vars: `AGENT_LLM_BASE_URL` (default `{OLLAMA_URL}/v1`),
 `AGENT_LLM_API_KEY`, `AGENT_LLM_MODEL` (default `llama3.1`),
@@ -96,7 +97,8 @@ Frontend talks to `/api/*` on the same origin (FastAPI serves static + API).
 - `.venv/` exists in working tree locally — use `requirements*.txt`, don't
   rely on it.
 - AutoGen Studio integration is the long-term engine candidate — the
-  in-house `app/agents/` loop is the first slice (ADR 0002); don't
+  in-house `app/agents/` loop + confirmed-write protocol is the first
+  slice (ADRs 0002/0003); don't
   assume AutoGen runtime exists.
 - `pytest` needs `requirements-dev.txt` installed; plain `requirements.txt`
   lacks test deps.
