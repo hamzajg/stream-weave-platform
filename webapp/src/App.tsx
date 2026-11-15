@@ -9,6 +9,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Onboarding } from './pages/Onboarding';
 import { Dashboard } from './pages/Dashboard';
+import { AgentChat } from './pages/AgentChat';
 
 function App() {
   return (
@@ -35,6 +36,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent"
+              element={
+                <ProtectedRoute>
+                  <AgentChat />
                 </ProtectedRoute>
               }
             />

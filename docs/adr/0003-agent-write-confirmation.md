@@ -47,8 +47,9 @@ Two-phase propose → approve, enforced structurally:
 
 - The LLM can propose but never execute writes — the safety boundary is
   code, not prompt text.
-- Approval is synchronous REST — no email/push notification yet; a UI
-  surface for pending actions is the natural next slice.
+- Approval is synchronous REST — no email/push notification yet. The
+  chat UI (`/agent`) renders pending actions inline with approve/reject
+  cards; delegated actions awaiting an admin have no notification yet.
 - `AgentPendingAction` is audit-grade: who proposed, what args, who
   resolved (`resolved_by`), result/error — replayable.
 - Deferred: multi-step saga writes, expiry sweep job (expiry is lazy —

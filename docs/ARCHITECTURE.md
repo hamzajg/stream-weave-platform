@@ -82,8 +82,11 @@ tools (no workflow builder yet):
 
 Same origin — no CORS needed in prod. Contract lives in
 `app/api/*.py` route decorators + `app/schemas/`. Webapp proxies nothing;
-it calls `/api/*` directly. The webapp does not call `/api/agents` yet —
-the agent API is backend-first; a chat UI is future work.
+it calls `/api/*` directly. The agent chat UI lives at `/agent`
+(`webapp/src/pages/AgentChat.tsx`): conversation sidebar per org,
+message thread (user/assistant/tool roles), and inline approve/reject
+cards for pending write actions (`GET /api/agents/actions` filtered by
+conversation). Linked from the Dashboard nav.
 
 ## Roadmap context (not yet built)
 
@@ -91,6 +94,8 @@ the agent API is backend-first; a chat UI is future work.
   runtime in `app/agents/` is the in-house first slice; AutoGen remains
   the longer-term engine decision (ADR 0002).
 - Visual workflow builder (no-code agentic workflows) — the product goal.
-- Write tools for the agent (org/invitation mutations need a
-  confirmation design first).
+- More write tools beyond `invite_org_member` (each needs the
+  confirmation protocol: `requires_confirmation` + optional
+  `authorize`), and notifications when a delegated action awaits an
+  org admin.
 - Email delivery for password reset.
