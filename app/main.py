@@ -13,6 +13,34 @@ settings = get_settings()
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
+
+def _ensure_columns() -> None:
+    """Add columns introduced after a database was first created.
+
+    `create_all` only creates missing tables — it never alters existing
+    ones, so a new model column would break every pre-existing database.
+    This adds any missing *nullable* column via ALTER TABLE. Limitations:
+    no constraints/defaults/FK are carried over (add those via a real
+    migration tool if a column ever needs them), and non-nullable columns
+    without server defaults are not supported.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing or not col.nullable:
+                    continue
+                col_type = col.type.compile(dialect=engine.dialect)
+                conn.execute(
+                    text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}')
+                )
+
+
+_ensure_columns()
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.app_name,
@@ -61,3 +89,17 @@ async def root():
 async def health_check():
     """Simple health check endpoint."""
     return {"status": "ok", "version": settings.app_version}
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    """Serve index.html for client-side routes so deep links and refresh
+    work (React Router has no server-side routes of its own). API paths
+    keep their JSON 404."""
+    if full_path.startswith("api/"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Not found")
+    index_path = os.path.join(static_path, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return JSONResponse(status_code=404, content={"detail": "Not found"})
