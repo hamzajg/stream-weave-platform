@@ -74,6 +74,13 @@ Feature: Workflow definitions
     Then version 1 as returned by GET /api/workflows/{id}/versions keeps its original nodes
     And the draft at version 2 contains the new graph
 
+  @w3 @publish
+  Scenario: An invalid draft cannot be published
+    Given a workflow in "Acme Corp" whose draft is still empty
+    When I POST /api/workflows/{id}/publish
+    Then the response is 422 and the message mentions "trigger"
+    And GET /api/workflows/{id} still reports draft version 1 with no published version
+
   @w3 @delete
   Scenario: Deleting a workflow removes its history
     Given a workflow in "Acme Corp" with a published version

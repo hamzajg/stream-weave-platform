@@ -296,6 +296,68 @@ def replace_draft(
     return serialize_version(draft)
 
 
+@router.post("/{workflow_id}/publish", response_model=WorkflowVersionResponse)
+def publish_workflow(
+    workflow_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Freeze the current draft as a published version and open the next draft.
+
+    The published row is never updated afterwards (SPEC.md D2); publishing
+    validates the stored graph first, so a workflow that could not run can
+    never become the live definition (D7).
+    """
+    workflow = _load_workflow(db, workflow_id, current_user)
+    _require_role(db, workflow, current_user, AUTHOR_ROLES)
+
+    draft = workflow.draft()
+    if draft is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Workflow has no draft to publish"
+        )
+
+    stored = _parse_definition(draft.definition)
+    problems = validate_definition(stored)
+    if problems:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Workflow definition is invalid and cannot be published",
+                "problems": problems,
+            },
+        )
+
+    now = datetime.utcnow()
+    draft.status = "published"
+    draft.published_at = now
+
+    next_draft = WorkflowVersion(
+        workflow_id=workflow.id,
+        version=draft.version + 1,
+        status="draft",
+        definition=draft.definition,
+        created_by=current_user.id,
+    )
+    db.add(next_draft)
+    workflow.updated_at = now
+    db.commit()
+    db.refresh(draft)
+    return serialize_version(draft)
+
+
+@router.get("/{workflow_id}/versions", response_model=List[WorkflowVersionResponse])
+def list_versions(
+    workflow_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Every version of a workflow, newest first (members of any role)."""
+    workflow = _load_workflow(db, workflow_id, current_user)
+    ordered = sorted(workflow.versions, key=lambda version: version.version, reverse=True)
+    return [serialize_version(version) for version in ordered]
+
+
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_workflow(
     workflow_id: UUID,
