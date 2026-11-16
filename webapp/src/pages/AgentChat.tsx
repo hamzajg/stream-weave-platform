@@ -41,6 +41,22 @@ interface PendingAction {
   resolved_by: string | null;
 }
 
+interface WorkflowNode {
+  id: string;
+  type: string;
+  label?: string | null;
+}
+
+interface WorkflowEdge {
+  source: string;
+  target: string;
+}
+
+interface WorkflowGraph {
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function authHeaders(): Record<string, string> {
@@ -51,6 +67,42 @@ function authHeaders(): Record<string, string> {
 
 function isExpired(action: PendingAction): boolean {
   return new Date(action.expires_at).getTime() < Date.now();
+}
+
+/** The write tools whose proposal carries a workflow name and graph. */
+const WORKFLOW_WRITES = ['create_workflow', 'replace_workflow_draft'];
+
+function isWorkflowWrite(action: PendingAction): boolean {
+  return WORKFLOW_WRITES.includes(action.tool_name);
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/**
+ * Read the `definition` argument defensively: proposals are model output, so a
+ * malformed graph must degrade to "nothing to preview", never to a crash.
+ */
+function readGraph(value: unknown): WorkflowGraph | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as { nodes?: unknown; edges?: unknown };
+  const nodes = Array.isArray(raw.nodes)
+    ? raw.nodes.filter(
+        (node): node is WorkflowNode =>
+          !!node && typeof node === 'object' && typeof (node as WorkflowNode).id === 'string',
+      )
+    : [];
+  const edges = Array.isArray(raw.edges)
+    ? raw.edges.filter(
+        (edge): edge is WorkflowEdge =>
+          !!edge &&
+          typeof edge === 'object' &&
+          typeof (edge as WorkflowEdge).source === 'string' &&
+          typeof (edge as WorkflowEdge).target === 'string',
+      )
+    : [];
+  return { nodes, edges };
 }
 
 export function AgentChat() {
@@ -426,6 +478,75 @@ function MessageBubble({ message }: { message: Message }) {
   );
 }
 
+function WorkflowProposal({ action }: { action: PendingAction }) {
+  const creating = action.tool_name === 'create_workflow';
+  const name = asString(action.arguments.name);
+  const description = asString(action.arguments.description);
+  const slug = asString(action.arguments.slug);
+  const workflowId = asString(action.arguments.workflow_id);
+  const graph = readGraph(action.arguments.definition);
+  const labelOf = (id: string) =>
+    graph?.nodes.find((node) => node.id === id)?.label || id;
+
+  return (
+    <div className="space-y-2 mb-2">
+      <p className="text-sm text-text-secondary">
+        {creating ? 'Create workflow' : 'Replace draft of'}{' '}
+        <span className="font-medium text-text-primary">
+          {name ?? slug ?? workflowId ?? 'unknown workflow'}
+        </span>
+        {!creating && name && slug && (
+          <span className="text-xs text-text-tertiary font-mono"> ({slug})</span>
+        )}
+      </p>
+      {description && <p className="text-xs text-text-secondary">{description}</p>}
+
+      {graph === null ? (
+        <p className="text-xs text-text-tertiary italic">No graph preview available.</p>
+      ) : (
+        <div className="rounded border border-border-subtle bg-background-primary p-2">
+          <p className="text-xs text-text-tertiary mb-1">
+            {graph.nodes.length} node{graph.nodes.length === 1 ? '' : 's'}
+            {' · '}
+            {graph.edges.length} edge{graph.edges.length === 1 ? '' : 's'}
+          </p>
+          {graph.nodes.length === 0 ? (
+            <p className="text-xs text-text-tertiary italic">
+              Empty draft — no nodes yet.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {graph.nodes.map((node) => (
+                <li key={node.id} className="flex items-center gap-2 text-xs">
+                  <span className="font-mono text-text-tertiary">{node.id}</span>
+                  <span className="px-1.5 py-0.5 rounded bg-background-tertiary text-text-secondary">
+                    {node.type}
+                  </span>
+                  <span className="text-text-primary truncate">
+                    {node.label || '—'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {graph.edges.length > 0 && (
+            <ul className="mt-2 space-y-0.5">
+              {graph.edges.map((edge, index) => (
+                <li
+                  key={`${edge.source}-${edge.target}-${index}`}
+                  className="text-xs text-text-secondary"
+                >
+                  {labelOf(edge.source)} → {labelOf(edge.target)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PendingActionCard({
   action,
   busy,
@@ -436,6 +557,9 @@ function PendingActionCard({
   onResolve: (action: PendingAction, decision: 'approve' | 'reject') => void;
 }) {
   const expired = isExpired(action);
+  const workflowWrite = isWorkflowWrite(action);
+  // Workflow writes carry a graph object, so they get a structured preview
+  // instead of a `key: [object Object]` summary.
   const args = Object.entries(action.arguments)
     .map(([k, v]) => `${k}: ${String(v)}`)
     .join('  ·  ');
@@ -447,7 +571,11 @@ function PendingActionCard({
         <span className="text-sm font-medium">Approval required</span>
         <span className="text-xs text-text-tertiary font-mono">{action.tool_name}</span>
       </div>
-      {args && <p className="text-xs text-text-secondary mb-1">{args}</p>}
+      {workflowWrite ? (
+        <WorkflowProposal action={action} />
+      ) : (
+        args && <p className="text-xs text-text-secondary mb-1">{args}</p>
+      )}
       <p className="text-xs text-text-tertiary mb-3">
         Proposed {new Date(action.created_at).toLocaleString()} · expires{' '}
         {new Date(action.expires_at).toLocaleString()}
