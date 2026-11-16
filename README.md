@@ -159,13 +159,30 @@ stream-weave-platform/
 | `/api/health` | GET | Detailed health status |
 | `/api/ready` | GET | Readiness check |
 
+### Workflow definitions
+
+A workflow is tenant-scoped identity (`workflows`) plus numbered, insert-only
+graph snapshots (`workflow_versions`). Publishing validates the draft and
+freezes it; the next draft is cloned from what just went live.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/workflows` | GET | List workflows in the caller's organizations |
+| `/api/workflows` | POST | Create a workflow with an empty draft at v1 (editor+) |
+| `/api/workflows/{id}` | GET | Fetch one workflow and its current draft graph |
+| `/api/workflows/{id}` | PATCH | Rename / re-describe (slug stays stable) |
+| `/api/workflows/{id}` | DELETE | Delete workflow and history (admin/owner) |
+| `/api/workflows/{id}/draft` | PUT | Replace the draft graph; `422` names an invalid node/edge |
+| `/api/workflows/{id}/publish` | POST | Freeze the draft as the next published version (editor+) |
+| `/api/workflows/{id}/versions` | GET | Version history, newest first |
+
+Another tenant's workflow id is always `404`; a viewer gets `403` on writes.
+Graph shape: `{"nodes": [{id, type, label?, config?}], "edges": [{source, target}]}`
+with `type` in `trigger | agent | condition | action` and exactly one trigger.
+
 ### Planned (Future Iterations)
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/auth/*` | Various | Authentication |
-| `/api/orgs/*` | Various | Organization management |
-| `/api/workflows/*` | Various | Workflow CRUD |
-| `/api/agents/*` | Various | Agent proxy |
 | `/api/runs/*` | GET | Execution monitoring |
 
 ### Password reset
