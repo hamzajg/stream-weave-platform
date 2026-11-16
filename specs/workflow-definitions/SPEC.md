@@ -61,6 +61,7 @@ workflow definition.
 | 7 | Publishing freezes the current draft as a numbered published version and starts a new editable draft | @w3 |
 | 8 | A published version is immutable: replacing the draft after publish does not alter the published snapshot, and version history lists both | @w3 |
 | 9 | Deleting a workflow removes it from the list and from version history lookups (`404` afterwards) | @w3 |
+| 10 | Publishing an invalid or empty draft is rejected with `422`, leaving the workflow unpublished and still editable | @w3 |
 
 ## Decisions
 
@@ -88,5 +89,10 @@ workflow definition.
   suffixed (`-2`, `-3`, …) on collision; it is stable after creation so links
   and future run URLs do not break on rename.
 - **D6 — Scope deliberately stops at the API.** No execution, no UI wiring;
-  AC-1..9 are all reachable with `pytest` against the in-memory SQLite fixture,
-  which is what makes every gate in `GATES.md` agent-resolvable.
+  AC-1..10 are all reachable with `pytest` against the in-memory SQLite
+  fixture, which is what makes every gate in `GATES.md` agent-resolvable.
+- **D7 — Publish validates, then clones.** Publishing runs the same validator
+  over the stored draft (an empty draft has no trigger and is refused with
+  `422`), flips that row to `published`, and inserts the next draft as a copy
+  of the graph just published. Editors therefore start from what is live rather
+  than from nothing, and the live definition is never one that cannot run.

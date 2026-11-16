@@ -451,3 +451,116 @@ def test_draft_of_a_foreign_workflow_is_404(api):
 
     rejected = _put_draft(client, outsider_token, workflow["id"], VALID_GRAPH)
     assert rejected.status_code == 404
+
+
+# ------------------------------------------------- US6..US8 / AC-7..AC-10
+
+def _publish(client, token, workflow_id):
+    return client.post(f"/api/workflows/{workflow_id}/publish", headers=_auth(token))
+
+
+def _versions(client, token, workflow_id):
+    return client.get(f"/api/workflows/{workflow_id}/versions", headers=_auth(token))
+
+
+def _published_workflow(api, token=None):
+    """Owner token, org, and a workflow whose version 1 is published."""
+    client, Session = api
+    token = token or _login(client, _register(client))
+    org = _create_org(client, token)
+    workflow = _create_workflow(client, token, org)
+    assert _put_draft(client, token, workflow["id"], VALID_GRAPH).status_code == 200
+    published = _publish(client, token, workflow["id"])
+    assert published.status_code == 200, published.text
+    return client, Session, token, org, workflow
+
+
+def test_publish_freezes_version_and_opens_next_draft(api):
+    client, Session, token, org, workflow = _published_workflow(api)
+
+    fetched = client.get(f"/api/workflows/{workflow['id']}", headers=_auth(token)).json()
+    assert fetched["published_version"] == 1
+    assert fetched["draft_version"] == 2
+
+    versions = _versions(client, token, workflow["id"])
+    assert versions.status_code == 200
+    assert [(v["version"], v["status"]) for v in versions.json()] == [
+        (2, "draft"),
+        (1, "published"),
+    ]
+    assert versions.json()[1]["definition"] == VALID_GRAPH
+    assert versions.json()[1]["published_at"] is not None
+
+
+def test_published_snapshot_never_changes(api):
+    client, Session, token, org, workflow = _published_workflow(api)
+
+    different = {
+        "nodes": [
+            {"id": "t1", "type": "trigger", "label": "Nightly"},
+            {"id": "x1", "type": "action", "label": "Email report"},
+        ],
+        "edges": [{"source": "t1", "target": "x1"}],
+    }
+    assert _put_draft(client, token, workflow["id"], different).status_code == 200
+
+    versions = {v["version"]: v for v in _versions(client, token, workflow["id"]).json()}
+    assert versions[1]["status"] == "published"
+    assert versions[1]["definition"] == VALID_GRAPH
+    assert versions[2]["status"] == "draft"
+    assert versions[2]["definition"] == different
+
+
+def test_invalid_draft_cannot_be_published(api):
+    client, Session = api
+    token = _login(client, _register(client))
+    org = _create_org(client, token)
+    workflow = _create_workflow(client, token, org)
+
+    rejected = _publish(client, token, workflow["id"])
+
+    assert rejected.status_code == 422, rejected.text
+    assert "trigger" in str(rejected.json())
+
+    fetched = client.get(f"/api/workflows/{workflow['id']}", headers=_auth(token)).json()
+    assert fetched["draft_version"] == 1
+    assert fetched["published_version"] is None
+
+
+def test_viewer_cannot_publish(api):
+    client, Session = api
+    owner_token = _login(client, _register(client))
+    org = _create_org(client, owner_token)
+    workflow = _create_workflow(client, owner_token, org)
+    assert _put_draft(client, owner_token, workflow["id"], VALID_GRAPH).status_code == 200
+    _, viewer_token = _member(client, Session, org)
+
+    assert _publish(client, viewer_token, workflow["id"]).status_code == 403
+    # A viewer may still read history.
+    assert _versions(client, viewer_token, workflow["id"]).status_code == 200
+
+
+def test_delete_removes_workflow_and_history(api):
+    client, Session, token, org, workflow = _published_workflow(api)
+
+    session = Session()
+    try:
+        admin_email = _register(client)
+        admin_token = _login(client, admin_email)
+        user = session.query(User).filter(User.email == admin_email).one()
+        session.add(
+            OrganizationMember(
+                organization_id=uuid.UUID(org["id"]),
+                user_id=user.id,
+                role=OrganizationRole.ADMIN,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    deleted = client.delete(f"/api/workflows/{workflow['id']}", headers=_auth(admin_token))
+    assert deleted.status_code == 204
+
+    assert _versions(client, token, workflow["id"]).status_code == 404
+    assert client.get(f"/api/workflows/{workflow['id']}", headers=_auth(token)).status_code == 404
