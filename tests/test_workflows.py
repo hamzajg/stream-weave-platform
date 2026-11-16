@@ -124,6 +124,7 @@ def _create_workflow(client, token, org, name="Invoice Triage"):
 # --------------------------------------------------------------- US1 / AC-1
 
 def test_editor_creates_workflow_with_empty_draft(api):
+    # Scenario: An editor creates a workflow
     client, Session = api
     email = _register(client)
     token = _login(client, email)
@@ -174,6 +175,7 @@ def test_rename_keeps_the_slug_stable(api):
 # ------------------------------------------------------- US2 / AC-2 tenancy
 
 def test_other_organizations_cannot_see_the_workflow(api):
+    # Scenario: Another organization's workflow is invisible
     client, Session = api
     owner_token = _login(client, _register(client))
     acme = _create_org(client, owner_token, "Acme Corp")
@@ -200,6 +202,7 @@ def test_other_organizations_cannot_see_the_workflow(api):
 # -------------------------------------------------- US3 / AC-3 role checks
 
 def test_viewer_is_read_only(api):
+    # Scenario: A viewer is read-only and an admin can delete
     client, Session = api
     owner_token = _login(client, _register(client))
     org = _create_org(client, owner_token)
@@ -322,6 +325,7 @@ def _put_draft(client, token, workflow_id, graph):
 
 
 def test_valid_draft_graph_is_persisted(api):
+    # Scenario: A valid draft graph is persisted
     client, Session = api
     token = _login(client, _register(client))
     org = _create_org(client, token)
@@ -350,6 +354,7 @@ def test_valid_draft_graph_is_persisted(api):
 
 
 def test_edge_to_undeclared_node_is_rejected_and_draft_unchanged(api):
+    # Scenario: An edge to an undeclared node is rejected
     client, Session = api
     token = _login(client, _register(client))
     org = _create_org(client, token)
@@ -412,6 +417,7 @@ def test_edge_to_undeclared_node_is_rejected_and_draft_unchanged(api):
     ],
 )
 def test_malformed_graph_is_rejected(api, graph, reason):
+    # Scenario: A malformed graph is rejected
     client, Session = api
     token = _login(client, _register(client))
     org = _create_org(client, token)
@@ -476,6 +482,7 @@ def _published_workflow(api, token=None):
 
 
 def test_publish_freezes_version_and_opens_next_draft(api):
+    # Scenario: Publishing freezes a version and opens the next draft
     client, Session, token, org, workflow = _published_workflow(api)
 
     fetched = client.get(f"/api/workflows/{workflow['id']}", headers=_auth(token)).json()
@@ -493,6 +500,7 @@ def test_publish_freezes_version_and_opens_next_draft(api):
 
 
 def test_published_snapshot_never_changes(api):
+    # Scenario: A published snapshot never changes
     client, Session, token, org, workflow = _published_workflow(api)
 
     different = {
@@ -512,6 +520,7 @@ def test_published_snapshot_never_changes(api):
 
 
 def test_invalid_draft_cannot_be_published(api):
+    # Scenario: An invalid draft cannot be published
     client, Session = api
     token = _login(client, _register(client))
     org = _create_org(client, token)
@@ -541,6 +550,7 @@ def test_viewer_cannot_publish(api):
 
 
 def test_delete_removes_workflow_and_history(api):
+    # Scenario: Deleting a workflow removes its history
     client, Session, token, org, workflow = _published_workflow(api)
 
     session = Session()

@@ -43,11 +43,14 @@ app/                        FastAPI backend
     onboarding.py           /api/onboarding: org/user onboarding flow
     dashboard.py            /api/dashboard: dashboard data
     agents.py               /api/agents: conversations + agent chat
+    workflows.py            /api/workflows: tenant-scoped workflow
+                            definitions; draft/publish + version history
   agents/                   agent runtime: tools.py (org-scoped tools;
                              write tools need human confirmation, ADR 0003)
                             tool registry), llm.py (OpenAI-compatible
                             client via httpx), loop.py (LLM ↔ tools)
-  models/                   user.py, organization.py, invitation.py
+  models/                   user.py, organization.py, invitation.py,
+                            agent.py, workflow.py
   schemas/                  pydantic request/response models
   static/                   built frontend (served at /)
   utils/                    helpers
@@ -68,6 +71,7 @@ docker-compose.yml          backend + webapp containers
 | onboarding | `/api/onboarding` | onboarding flow |
 | dashboard | `/api/dashboard` | dashboard aggregates |
 | agents | `/api/agents` | `GET /tools`; `POST/GET /conversations`; `GET /conversations/{id}`; `POST /conversations/{id}/messages` (runs the agent loop); `GET /actions`; `POST /actions/{id}/approve|reject` (human-confirmed writes) |
+| workflows | `/api/workflows` | `POST/GET` list+create; `GET/PATCH/DELETE /{id}`; `PUT /{id}/draft` (validated graph); `POST /{id}/publish`; `GET /{id}/versions`. 404 across tenants before any 403. |
 
 Agent LLM env vars: `AGENT_LLM_BASE_URL` (default `{OLLAMA_URL}/v1`),
 `AGENT_LLM_API_KEY`, `AGENT_LLM_MODEL` (default `llama3.1`),
