@@ -58,9 +58,10 @@ tools (no workflow builder yet):
 - Tools (`tools.py`) re-check membership/role per call:
   `list_org_members`, `get_organization_info`,
   `list_pending_invitations` (admin+), `list_my_organizations`,
-  `list_workflows`, `get_workflow`, and the write tool `invite_org_member`
-  (admin+, `requires_confirmation`). The workflow tools are read-only and
-  tenant-scoped: another organization's workflow is reported as not found.
+  `list_workflows`, `get_workflow`, and the write tools `invite_org_member`
+  (admin+), `create_workflow` and `replace_workflow_draft` (owner/admin/
+  editor), each `requires_confirmation`. The read tools are tenant-scoped:
+  another organization's workflow is reported as not found.
 - **Write tools never execute in-loop** (ADR 0003): they persist an
   `AgentPendingAction` (24h TTL) instead — after an optional
   proposal-time `authorize` check. `GET /api/agents/actions` lists the

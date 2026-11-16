@@ -17,11 +17,20 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.api.workflows import _unique_slug, generate_slug
 from app.models import (
     User, Organization, OrganizationMember, Invitation, OrganizationRole,
-    AgentPendingAction, Workflow,
+    AgentPendingAction, Workflow, WorkflowVersion,
 )
 from app.utils.auth import generate_invitation_token
+from app.utils.workflow_graph import empty_definition, validate_definition
+
+#: Roles allowed to create a workflow or change its draft (mirrors the API).
+AUTHOR_ROLES = (
+    OrganizationRole.OWNER,
+    OrganizationRole.ADMIN,
+    OrganizationRole.EDITOR,
+)
 
 
 @dataclass
@@ -66,6 +75,14 @@ def _require_member(db: Session, user: User, org_id: UUID) -> OrganizationMember
 def _require_admin(db: Session, user: User, org_id: UUID) -> OrganizationMember:
     member = _require_member(db, user, org_id)
     if member.role not in (OrganizationRole.OWNER, OrganizationRole.ADMIN):
+        raise PermissionError("Insufficient permissions")
+    return member
+
+
+def _require_author(db: Session, user: User, org_id: UUID) -> OrganizationMember:
+    """Owner, admin or editor: the roles the workflow API lets write."""
+    member = _require_member(db, user, org_id)
+    if member.role not in AUTHOR_ROLES:
         raise PermissionError("Insufficient permissions")
     return member
 
@@ -211,11 +228,8 @@ def list_workflows(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) 
     }
 
 
-def get_workflow(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
-    """Read one workflow (by id or slug) with its current draft graph."""
-    _require_member(db, user, org_id)
-    _org_or_404(db, org_id)
-
+def _select_workflow(db: Session, org_id: UUID, args: Dict[str, Any]) -> Workflow:
+    """Look a workflow up by id or slug, scoped to one organization."""
     raw_id = args.get("workflow_id")
     slug = (args.get("slug") or "").strip()
     if bool(raw_id) == bool(slug):
@@ -234,11 +248,136 @@ def get_workflow(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) ->
         # Same answer for "does not exist" and "belongs to another org" —
         # the agent must not be able to probe for workflows it cannot see.
         raise LookupError("Workflow not found")
+    return workflow
 
+
+def get_workflow(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Read one workflow (by id or slug) with its current draft graph."""
+    _require_member(db, user, org_id)
+    _org_or_404(db, org_id)
+
+    workflow = _select_workflow(db, org_id, args)
     draft = workflow.draft()
     return {
         **_workflow_summary(workflow),
         "definition": _parse_definition(draft.definition if draft else None),
+    }
+
+
+def _validate_create_args(args: Dict[str, Any]) -> Tuple[str, Optional[str], Dict[str, Any]]:
+    """Shared validation for create_workflow (proposal + execution)."""
+    name = (args.get("name") or "").strip()
+    if not name:
+        raise ValueError("A workflow name is required")
+    if len(name) > 255:
+        raise ValueError("Workflow name must be 255 characters or fewer")
+    description = args.get("description")
+    if description is not None and not str(description).strip():
+        description = None
+    definition = args.get("definition")
+    if definition is None:
+        # A bare workflow starts with the API's empty draft, which has no
+        # trigger node yet; only a graph the agent supplied must be coherent.
+        definition = empty_definition()
+    else:
+        problems = validate_definition(definition)
+        if problems:
+            raise ValueError("Invalid workflow graph: " + "; ".join(problems))
+    return name, (None if description is None else str(description)), definition
+
+
+def _validate_draft_args(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Shared validation for replace_workflow_draft (proposal + execution)."""
+    definition = args.get("definition")
+    if definition is None:
+        raise ValueError("A definition with nodes and edges is required")
+    problems = validate_definition(definition)
+    if problems:
+        raise ValueError("Invalid workflow graph: " + "; ".join(problems))
+    return definition
+
+
+def authorize_create_workflow(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> None:
+    """Proposal-time check: authors only, with a valid name and graph."""
+    _require_author(db, user, org_id)
+    _org_or_404(db, org_id)
+    _validate_create_args(args)
+
+
+def create_workflow(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a workflow with a draft at version 1. Requires human
+    confirmation — runs only from the approve endpoint, never in-loop."""
+    _require_author(db, user, org_id)
+    org = _org_or_404(db, org_id)
+    name, description, definition = _validate_create_args(args)
+
+    # The slug is derived at execution time, so a name that gained a
+    # sibling while the proposal waited still gets a unique slug.
+    slug = _unique_slug(db, org_id, generate_slug(name))
+    workflow = Workflow(
+        organization_id=org_id,
+        name=name,
+        slug=slug,
+        description=description,
+        created_by=user.id,
+    )
+    db.add(workflow)
+    db.flush()
+
+    draft = WorkflowVersion(
+        workflow_id=workflow.id,
+        version=1,
+        status="draft",
+        definition=json.dumps(definition),
+        created_by=user.id,
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(workflow)
+    return {
+        **_workflow_summary(workflow),
+        "definition": _parse_definition(draft.definition),
+        "organization": {"id": str(org.id), "name": org.name, "slug": org.slug},
+    }
+
+
+def authorize_replace_draft(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> None:
+    """Proposal-time check: authors only, on a workflow this org can see."""
+    _require_author(db, user, org_id)
+    _org_or_404(db, org_id)
+    _select_workflow(db, org_id, args)
+    _validate_draft_args(args)
+
+
+def replace_workflow_draft(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace a workflow's editable draft graph. Requires human
+    confirmation — runs only from the approve endpoint, never in-loop.
+
+    Published versions are never touched: this writes the draft row only,
+    and opens one if the workflow somehow has none."""
+    _require_author(db, user, org_id)
+    _org_or_404(db, org_id)
+    workflow = _select_workflow(db, org_id, args)
+    definition = _validate_draft_args(args)
+
+    draft = workflow.draft()
+    if draft is None:
+        draft = WorkflowVersion(
+            workflow_id=workflow.id,
+            version=max((v.version for v in workflow.versions), default=0) + 1,
+            status="draft",
+            definition=json.dumps(definition),
+            created_by=user.id,
+        )
+        db.add(draft)
+    else:
+        draft.definition = json.dumps(definition)
+    workflow.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(workflow)
+    return {
+        **_workflow_summary(workflow),
+        "definition": definition,
     }
 
 
@@ -403,6 +542,66 @@ register(Tool(
         "required": [],
     },
     func=get_workflow,
+))
+
+register(Tool(
+    name="create_workflow",
+    description="Create a workflow in the current organization with a draft at "
+                "version 1, optionally seeded with a node/edge graph. "
+                "REQUIRES HUMAN CONFIRMATION: the call only creates a pending "
+                "action; a user must approve it before anything is written. "
+                "Requires owner, admin or editor role.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Workflow name (the slug is derived from it)",
+            },
+            "description": {
+                "type": "string",
+                "description": "Optional short description",
+            },
+            "definition": {
+                "type": "object",
+                "description": "Optional graph: {\"nodes\": [...], \"edges\": [...]}",
+            },
+        },
+        "required": ["name"],
+    },
+    func=create_workflow,
+    requires_confirmation=True,
+    authorize=authorize_create_workflow,
+))
+
+register(Tool(
+    name="replace_workflow_draft",
+    description="Replace the editable draft graph of an existing workflow. "
+                "Published versions are never modified. REQUIRES HUMAN "
+                "CONFIRMATION: the call only creates a pending action; a user "
+                "must approve it before anything is written. Requires owner, "
+                "admin or editor role.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "workflow_id": {
+                "type": "string",
+                "description": "Workflow UUID (use this or slug)",
+            },
+            "slug": {
+                "type": "string",
+                "description": "Workflow slug within the organization (use this or workflow_id)",
+            },
+            "definition": {
+                "type": "object",
+                "description": "The new graph: {\"nodes\": [...], \"edges\": [...]}",
+            },
+        },
+        "required": ["definition"],
+    },
+    func=replace_workflow_draft,
+    requires_confirmation=True,
+    authorize=authorize_replace_draft,
 ))
 
 register(Tool(
