@@ -1,0 +1,26 @@
+{
+  "feature": "workflow-definitions",
+  "status": "running",
+  "iterations": 1,
+  "updated": "2026-11-16T08:01:01Z",
+  "waves": {
+    "1": {
+      "status": "in-progress",
+      "branch": "feat/workflow-definitions-w1",
+      "pr": "\u2014",
+      "evidence": "\u2014",
+      "updated": "2026-11-16T08:01:01Z"
+    }
+  },
+  "gates": {
+    "G1": {
+      "status": "met",
+      "evidence": "specs/workflow-definitions/SPEC.md Decisions D1-D6 (tables, insert-only versions, {nodes,edges} shape, 404-before-403, s",
+      "updated": "2026-11-16T07:59:27Z"
+    }
+  },
+  "events": [
+    "2026-11-16T07:59:27Z gate G1 met: specs/workflow-definitions/SPEC.md Decisions D1-D6 (tables, insert-only versions, {nodes,edges} shape, 404-before-403, s",
+    "2026-11-16T08:01:01Z start wave 1 on feat/workflow-definitions-w1"
+  ]
+}
