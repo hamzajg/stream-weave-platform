@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     User, Organization, OrganizationMember, Invitation, OrganizationRole,
-    AgentPendingAction,
+    AgentPendingAction, Workflow,
 )
 from app.utils.auth import generate_invitation_token
 
@@ -165,6 +165,83 @@ def list_my_organizations(db: Session, user: User, org_id: UUID, args: Dict[str,
     }
 
 
+def _parse_definition(raw: Optional[str]) -> Dict[str, Any]:
+    """A version's stored graph, tolerating a row written by an older build."""
+    try:
+        parsed = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {"nodes": [], "edges": []}
+    return parsed if isinstance(parsed, dict) else {"nodes": [], "edges": []}
+
+
+def _workflow_summary(workflow: Workflow) -> Dict[str, Any]:
+    """The fields a reader needs without shipping the whole graph."""
+    draft = workflow.draft()
+    published = workflow.published()
+    definition = _parse_definition(draft.definition if draft else None)
+    return {
+        "id": str(workflow.id),
+        "name": workflow.name,
+        "slug": workflow.slug,
+        "description": workflow.description,
+        "draft_version": draft.version if draft else None,
+        "published_version": published.version if published else None,
+        "node_count": len(definition.get("nodes") or []),
+        "edge_count": len(definition.get("edges") or []),
+        "updated_at": workflow.updated_at.isoformat() if workflow.updated_at else None,
+    }
+
+
+def list_workflows(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
+    """List workflows in the current organization, newest first."""
+    _require_member(db, user, org_id)
+    org = _org_or_404(db, org_id)
+
+    query = db.query(Workflow).filter(Workflow.organization_id == org_id)
+    needle = (args.get("query") or "").strip().lower()
+    workflows = query.order_by(Workflow.created_at.desc()).all()
+    if needle:
+        workflows = [
+            w for w in workflows
+            if needle in w.name.lower() or needle in w.slug.lower()
+        ]
+    return {
+        "organization": {"id": str(org.id), "name": org.name, "slug": org.slug},
+        "workflows": [_workflow_summary(w) for w in workflows],
+    }
+
+
+def get_workflow(db: Session, user: User, org_id: UUID, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Read one workflow (by id or slug) with its current draft graph."""
+    _require_member(db, user, org_id)
+    _org_or_404(db, org_id)
+
+    raw_id = args.get("workflow_id")
+    slug = (args.get("slug") or "").strip()
+    if bool(raw_id) == bool(slug):
+        raise ValueError("Provide either workflow_id or slug, not both")
+
+    query = db.query(Workflow).filter(Workflow.organization_id == org_id)
+    if slug:
+        workflow = query.filter(Workflow.slug == slug).first()
+    else:
+        try:
+            workflow_id = UUID(str(raw_id))
+        except (TypeError, ValueError):
+            raise ValueError("workflow_id must be a UUID")
+        workflow = query.filter(Workflow.id == workflow_id).first()
+    if workflow is None:
+        # Same answer for "does not exist" and "belongs to another org" —
+        # the agent must not be able to probe for workflows it cannot see.
+        raise LookupError("Workflow not found")
+
+    draft = workflow.draft()
+    return {
+        **_workflow_summary(workflow),
+        "definition": _parse_definition(draft.definition if draft else None),
+    }
+
+
 def _validate_invite_args(args: Dict[str, Any]) -> Tuple[str, OrganizationRole]:
     """Shared argument validation for invite_org_member (proposal + execute)."""
     email = (args.get("email") or "").strip().lower()
@@ -286,6 +363,46 @@ register(Tool(
     description="List every organization the current user belongs to, with the user's role in each.",
     parameters={"type": "object", "properties": {}, "required": []},
     func=list_my_organizations,
+))
+
+register(Tool(
+    name="list_workflows",
+    description="List the workflows defined in the current organization, newest "
+                "first, with their draft and published version numbers. Use "
+                "`query` to narrow by name or slug.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Optional case-insensitive text to match against name or slug",
+            },
+        },
+        "required": [],
+    },
+    func=list_workflows,
+))
+
+register(Tool(
+    name="get_workflow",
+    description="Read one workflow from the current organization — metadata plus "
+                "the nodes and edges of its current draft. Look it up by id or "
+                "by slug.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "workflow_id": {
+                "type": "string",
+                "description": "Workflow UUID (use this or slug)",
+            },
+            "slug": {
+                "type": "string",
+                "description": "Workflow slug within the organization (use this or workflow_id)",
+            },
+        },
+        "required": [],
+    },
+    func=get_workflow,
 ))
 
 register(Tool(
