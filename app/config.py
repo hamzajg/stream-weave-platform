@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     password_reset_expire_minutes: int = 30
     
+    # CORS — comma-separated browser origins allowed to call the API.
+    # Defaults to the Vite dev server; the bundled SPA is served same-origin
+    # from `app/static` and needs no entry. Never use "*" here: it cannot be
+    # combined with credentials (browsers reject the response), so wildcards
+    # are dropped and logged at startup.
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     # Static files
     static_dir: str = "static"
     
@@ -33,6 +40,11 @@ class Settings(BaseSettings):
     agent_max_iterations: int = 6
     agent_max_history: int = 20
     
+    @property
+    def cors_origin_list(self) -> list:
+        """Configured CORS origins, stripped of whitespace and empties."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
     class Config:
         env_file = ".env"
         case_sensitive = False

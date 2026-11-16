@@ -114,6 +114,23 @@ docker-compose logs -f app
 
 Visit `http://localhost:8000` to see the landing page.
 
+### CORS
+
+The API allows credentialed browser requests only from explicitly listed
+origins — `CORS_ORIGINS` (comma-separated), defaulting to the Vite dev server
+(`http://localhost:5173,http://127.0.0.1:5173`). The bundled SPA is served
+same-origin and needs no entry.
+
+```bash
+# e.g. an admin console on another host
+export CORS_ORIGINS="https://console.example.com"
+```
+
+`CORS_ORIGINS=*` is refused: a wildcard cannot be combined with credentials
+(browsers reject `Access-Control-Allow-Origin: *` plus
+`Access-Control-Allow-Credentials: true`), so wildcards are dropped and logged
+at startup rather than silently allowing every site.
+
 ---
 
 ## Project Structure

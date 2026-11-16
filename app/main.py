@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 import os
 
 from app.config import get_settings
@@ -50,10 +51,31 @@ app = FastAPI(
     redoc_url="/api/redoc" if settings.debug else None,
 )
 
-# CORS middleware
+def cors_origins(settings) -> list:
+    """Explicit browser origins for CORS; a wildcard is dropped.
+
+    `allow_origins=["*"]` with `allow_credentials=True` is invalid: the
+    browser is told `Access-Control-Allow-Origin: *` plus
+    `Access-Control-Allow-Credentials: true`, a pair it must reject, and
+    preflight then echoes *any* origin. Configuring the origins explicitly
+    keeps credentialed requests working (bearer-token SPA, cookie flows) while
+    an accidental `CORS_ORIGINS=*` fails closed instead of silently allowing
+    everyone.
+    """
+    configured = settings.cors_origin_list
+    allowed = [origin for origin in configured if origin != "*"]
+    if len(allowed) != len(configured):
+        logging.getLogger(__name__).warning(
+            "CORS_ORIGINS contained '*', which cannot be combined with "
+            "credentials; ignoring it. List explicit origins instead."
+        )
+    return allowed
+
+
+# CORS middleware — explicit origins only (see cors_origins above)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=cors_origins(settings),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
