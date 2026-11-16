@@ -26,11 +26,12 @@ from app.models import (
 )
 from app.schemas.workflow import (
     WorkflowCreate,
+    WorkflowDefinition,
     WorkflowResponse,
     WorkflowUpdate,
     WorkflowVersionResponse,
 )
-from app.utils.workflow_graph import empty_definition
+from app.utils.workflow_graph import empty_definition, validate_definition
 
 router = APIRouter()
 
@@ -245,6 +246,54 @@ def update_workflow(
     db.commit()
     db.refresh(workflow)
     return serialize_workflow(workflow)
+
+
+@router.put("/{workflow_id}/draft", response_model=WorkflowVersionResponse)
+def replace_draft(
+    workflow_id: UUID,
+    payload: WorkflowDefinition,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Replace the editable draft graph, rejecting an incoherent definition.
+
+    The draft row is updated in place; a published version is never touched
+    (SPEC.md D2), so an editor can keep iterating without rewriting history.
+    """
+    workflow = _load_workflow(db, workflow_id, current_user)
+    _require_role(db, workflow, current_user, AUTHOR_ROLES)
+
+    # exclude_none keeps the stored graph byte-identical to what the builder
+    # sent: an omitted optional field must not reappear as `null`.
+    definition = payload.model_dump(exclude_none=True)
+    problems = validate_definition(definition)
+    if problems:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Workflow definition is invalid",
+                "problems": problems,
+            },
+        )
+
+    draft = workflow.draft()
+    if draft is None:
+        next_version = max((v.version for v in workflow.versions), default=0) + 1
+        draft = WorkflowVersion(
+            workflow_id=workflow.id,
+            version=next_version,
+            status="draft",
+            definition=json.dumps(definition),
+            created_by=current_user.id,
+        )
+        db.add(draft)
+    else:
+        draft.definition = json.dumps(definition)
+
+    workflow.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(draft)
+    return serialize_version(draft)
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)

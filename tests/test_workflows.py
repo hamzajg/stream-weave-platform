@@ -296,3 +296,158 @@ def test_create_in_foreign_organization_is_404(api):
         headers=_auth(outsider_token),
     )
     assert response.status_code == 404
+
+
+# ------------------------------------------------- US4/US5 / AC-4..AC-6
+
+VALID_GRAPH = {
+    "nodes": [
+        {"id": "t1", "type": "trigger", "label": "New invoice"},
+        {"id": "a1", "type": "agent", "label": "Classify"},
+        {"id": "x1", "type": "action", "label": "File it", "config": {"queue": "ap"}},
+    ],
+    "edges": [
+        {"source": "t1", "target": "a1"},
+        {"source": "a1", "target": "x1"},
+    ],
+}
+
+
+def _put_draft(client, token, workflow_id, graph):
+    return client.put(
+        f"/api/workflows/{workflow_id}/draft",
+        json=graph,
+        headers=_auth(token),
+    )
+
+
+def test_valid_draft_graph_is_persisted(api):
+    client, Session = api
+    token = _login(client, _register(client))
+    org = _create_org(client, token)
+    workflow = _create_workflow(client, token, org)
+
+    saved = _put_draft(client, token, workflow["id"], VALID_GRAPH)
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["version"] == 1
+    assert saved.json()["status"] == "draft"
+    assert saved.json()["definition"] == VALID_GRAPH
+
+    fetched = client.get(f"/api/workflows/{workflow['id']}", headers=_auth(token))
+    assert fetched.json()["definition"] == VALID_GRAPH
+    assert fetched.json()["draft_version"] == 1
+
+    # Replacing again overwrites the same draft row rather than adding a version.
+    trimmed = {
+        "nodes": VALID_GRAPH["nodes"][:2],
+        "edges": [{"source": "t1", "target": "a1"}],
+    }
+    replaced = _put_draft(client, token, workflow["id"], trimmed)
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["version"] == 1
+    assert replaced.json()["definition"] == trimmed
+
+
+def test_edge_to_undeclared_node_is_rejected_and_draft_unchanged(api):
+    client, Session = api
+    token = _login(client, _register(client))
+    org = _create_org(client, token)
+    workflow = _create_workflow(client, token, org)
+    assert _put_draft(client, token, workflow["id"], VALID_GRAPH).status_code == 200
+
+    broken = {
+        "nodes": VALID_GRAPH["nodes"],
+        "edges": [{"source": "t1", "target": "ghost"}],
+    }
+    rejected = _put_draft(client, token, workflow["id"], broken)
+
+    assert rejected.status_code == 422, rejected.text
+    assert "ghost" in str(rejected.json())
+
+    fetched = client.get(f"/api/workflows/{workflow['id']}", headers=_auth(token))
+    assert fetched.json()["definition"] == VALID_GRAPH
+
+
+@pytest.mark.parametrize(
+    "graph,reason",
+    [
+        (
+            {
+                "nodes": [
+                    {"id": "t1", "type": "trigger"},
+                    {"id": "t1", "type": "action"},
+                ],
+                "edges": [],
+            },
+            "duplicate node",
+        ),
+        (
+            {
+                "nodes": [{"id": "a1", "type": "agent"}],
+                "edges": [],
+            },
+            "trigger",
+        ),
+        (
+            {
+                "nodes": [
+                    {"id": "t1", "type": "trigger"},
+                    {"id": "t2", "type": "trigger"},
+                ],
+                "edges": [],
+            },
+            "trigger",
+        ),
+        (
+            {
+                "nodes": [
+                    {"id": "t1", "type": "trigger"},
+                    {"id": "u1", "type": "teleport"},
+                ],
+                "edges": [],
+            },
+            "unknown type",
+        ),
+    ],
+)
+def test_malformed_graph_is_rejected(api, graph, reason):
+    client, Session = api
+    token = _login(client, _register(client))
+    org = _create_org(client, token)
+    workflow = _create_workflow(client, token, org)
+
+    rejected = _put_draft(client, token, workflow["id"], graph)
+
+    assert rejected.status_code == 422, rejected.text
+    assert reason in str(rejected.json())
+
+    # The empty draft from creation is untouched.
+    fetched = client.get(f"/api/workflows/{workflow['id']}", headers=_auth(token))
+    assert fetched.json()["definition"] == {"nodes": [], "edges": []}
+    assert fetched.json()["draft_version"] == 1
+
+
+def test_viewer_cannot_replace_the_draft(api):
+    client, Session = api
+    owner_token = _login(client, _register(client))
+    org = _create_org(client, owner_token)
+    workflow = _create_workflow(client, owner_token, org)
+    _, viewer_token = _member(client, Session, org)
+
+    rejected = _put_draft(client, viewer_token, workflow["id"], VALID_GRAPH)
+
+    assert rejected.status_code == 403
+
+
+def test_draft_of_a_foreign_workflow_is_404(api):
+    client, Session = api
+    owner_token = _login(client, _register(client))
+    acme = _create_org(client, owner_token, "Acme Corp")
+    workflow = _create_workflow(client, owner_token, acme)
+
+    outsider_token = _login(client, _register(client))
+    _create_org(client, outsider_token, "Globex")
+
+    rejected = _put_draft(client, outsider_token, workflow["id"], VALID_GRAPH)
+    assert rejected.status_code == 404
