@@ -10,6 +10,8 @@ import { Register } from './pages/Register';
 import { Onboarding } from './pages/Onboarding';
 import { Dashboard } from './pages/Dashboard';
 import { AgentChat } from './pages/AgentChat';
+import { Workflows } from './pages/Workflows';
+import { WorkflowDetail } from './pages/WorkflowDetail';
 
 function App() {
   return (
@@ -44,6 +46,22 @@ function App() {
               element={
                 <ProtectedRoute>
                   <AgentChat />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/workflows"
+              element={
+                <ProtectedRoute>
+                  <Workflows />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/workflows/:id"
+              element={
+                <ProtectedRoute>
+                  <WorkflowDetail />
                 </ProtectedRoute>
               }
             />

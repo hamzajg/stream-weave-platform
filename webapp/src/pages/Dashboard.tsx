@@ -103,7 +103,10 @@ export function Dashboard() {
                 <LayoutDashboard className="w-4 h-4 inline mr-2" />
                 Dashboard
               </button>
-              <button className="px-3 py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-background-tertiary transition-colors">
+              <button
+                onClick={() => navigate('/workflows')}
+                className="px-3 py-2 rounded text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-background-tertiary transition-colors"
+              >
                 <Workflow className="w-4 h-4 inline mr-2" />
                 Workflows
               </button>
